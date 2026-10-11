@@ -40,7 +40,7 @@ namespace NZIP {
             }
         }
         internal async Task RunSmoke(string output){
-            Directory.CreateDirectory(output);var checks=new List<string>();IDataObject originalClipboard=null;try{
+            Directory.CreateDirectory(output);var checks=new List<string>();var threadErrors=new List<Exception>();ThreadExceptionEventHandler onThreadError=(s,e)=>threadErrors.Add(e.Exception);Application.ThreadException+=onThreadError;IDataObject originalClipboard=null;try{
                 originalClipboard=Clipboard.GetDataObject();var snapshot=new DataObject();if(originalClipboard!=null)foreach(string format in originalClipboard.GetFormats(false)){try{object value=originalClipboard.GetData(format,false);if(value!=null)snapshot.SetData(format,false,value);}catch{}}originalClipboard=snapshot;
                 preferences.Values["modalProgress"]=false;preferences.Values["openAfterExtract"]=false;preferences.Values["confirmDelete"]=false;ApplyPreferences();
                 Assert(menus.Items.Count==7,"Seven main menus");Assert(commands.ContainsKey("delete-permanent")&&commands.ContainsKey("admin-window")&&commands.ContainsKey("comment")&&commands.ContainsKey("recover"),"Screenshot menu commands");Assert(columnsMenu.DropDownItems.Count==10&&pagesMenu.DropDownItems.Count==17,"Fields and code pages");checks.Add("native menus and complete codepage / field lists");
@@ -64,11 +64,42 @@ namespace NZIP {
                 using(var settings=new SettingsWindow(this,backend,preferences)){settings.Show(this);var navigation=settings.Controls.OfType<Panel>().SelectMany(c=>c.Controls.OfType<ListBox>()).Single();navigation.SelectedIndex=4;var formats=(ComboBox)Find(settings,"setting-defaultFormat");Assert(formats.Items.Count==10,"Default format choices");formats.SelectedItem="tar.xz";((Button)Find(settings,"settings-save")).PerformClick();settings.Close();}ApplyPreferences();Assert(new DesktopPreferences(backend.Profile,new J()).Str("defaultFormat")=="tar.xz","New default format persists");checks.Add("expanded default compression format persists through real settings controls");
                 string compound=Path.Combine(output,"多格式.tar.xz");using(var timer=FillDialog("新建压缩文件",form=>{var formats=(ComboBox)Find(form,"create-format");var destination=(TextBox)Find(form,"create-destination");Assert(formats.Items.Count==10&&formats.SelectedItem.ToString()=="TAR.XZ","Create defaults to selected new format");destination.Text=Path.Combine(output,"多格式.zip");formats.SelectedItem="7Z";Assert(Find(form,"create-password").Enabled&&Find(form,"create-headers").Enabled,"7Z options enabled");formats.SelectedItem="GZ";Assert(!Find(form,"create-password").Enabled&&!Find(form,"create-volume").Enabled&&Find(form,"create-format-note").Text.Contains("单个"),"Single-file options and hint");foreach(var f in new[]{"TAR.GZ","TAR.BZ2","TAR.XZ"}){formats.SelectedItem=f;Assert(destination.Text.EndsWith("多格式."+f.ToLowerInvariant()),"Compound suffix switching");}((ListBox)Find(form,"create-sources")).Items.Add(source);ScreenshotForm(form,output,"create-formats");((EditorDialog)form).Confirm.PerformClick();})){commands["new"].PerformClick();}await WaitFor(()=>!backend.Busy,"compound compression");Assert(File.Exists(compound),"Compound menu output");await OpenArchive(compound);GoFolder("素材/");SelectByName("你好.txt");Screenshot(output,"compound-archive");await Preview();var compoundPreview=Application.OpenForms.Cast<Form>().Single(f=>f.Name=="text-preview");Assert(((TextBox)Find(compoundPreview,"text-content")).Text.Contains("原生界面"),"Compound preview contents");compoundPreview.Close();checks.Add("ten create formats, compatible options, compound suffix, real TAR.XZ browsing and text preview");
                 string compoundOut=Path.Combine(output,"复合包解压");using(var timer=FillDialog("解压文件",form=>{var destination=(TextBox)Find(form,"extract-destination");Assert(destination.Text.EndsWith("多格式"),"Compound folder name strips full suffix");destination.Text=compoundOut;((EditorDialog)form).Confirm.PerformClick();})){await Execute("extract-selected");}await WaitFor(()=>!backend.Busy,"compound selected extraction");Assert(File.ReadAllText(Path.Combine(compoundOut,"素材","你好.txt")).Contains("原生界面"),"Compound extracted directly");Assert(!File.Exists(Path.Combine(compoundOut,"素材","图片.png")),"Only selected compound entry extracted");checks.Add("one-step selected extraction from compressed TAR through native dialog");
+                await CheckListTransitions(output,checks);
                 await CheckTaskResults(output,checks);
                 await CheckLocalOpening(output,checks);
+                Assert(threadErrors.Count==0,"Unhandled UI exceptions: "+String.Join("\r\n",threadErrors.Select(e=>e.ToString())));
                 File.WriteAllText(Path.Combine(output,"result.json"),Json.Encode(Json.Obj("ok",true,"checks",checks,"runtime","winforms")));
             }catch(Exception error){Environment.ExitCode=1;File.WriteAllText(Path.Combine(output,"result.json"),Json.Encode(Json.Obj("ok",false,"error",error.ToString(),"checks",checks)));}
-            finally{try{if(originalClipboard!=null)Clipboard.SetDataObject(originalClipboard,true);}catch{}foreach(var form in Application.OpenForms.Cast<Form>().Where(f=>f!=this).ToArray())form.Close();Close();}
+            finally{Application.ThreadException-=onThreadError;try{if(originalClipboard!=null)Clipboard.SetDataObject(originalClipboard,true);}catch{}foreach(var form in Application.OpenForms.Cast<Form>().Where(f=>f!=this).ToArray())form.Close();Close();}
+        }
+        async Task CheckListTransitions(string output,List<string> checks){
+            string path=Json.Str(archive,"path");
+            var originalEntries=entries;
+            try{
+                entries=Enumerable.Range(0,256).Select(i=>Json.Obj("path","many/item-"+i.ToString("D3")+".txt","name","item-"+i.ToString("D3")+".txt")).ToList();
+                entries.Add(Json.Obj("path","empty/","name","empty","isDirectory",true));BuildTree();
+                for(int pass=0;pass<3;pass++){
+                    GoFolder("many/");int last=visible.Count-1;string oldName=Json.Str(visible[last],"name");files.SelectedIndices.Add(last);files.EnsureVisible(last);files.Refresh();
+                    int retrieved=0;
+                    EventHandler onSelection=(s,e)=>{if(last<files.VirtualListSize){Assert(files.Items[last].Text==oldName,"Selection notification must still retrieve the previous row");retrieved++;}};
+                    files.SelectedIndexChanged+=onSelection;
+                    try{if(pass==0)GoFolder("empty/");else if(pass==1)search.Text="no-matching-entry";else ShowHome();}
+                    finally{files.SelectedIndexChanged-=onSelection;}
+                    Assert(retrieved>0,"Exercise synchronous virtual-row retrieval during selection clearing");
+                    Assert(files.VirtualListSize==visible.Count,"Native count matches displayed rows after transition");
+                    foreach(int staleIndex in new[]{-1,last,Int32.MaxValue}){
+                        var request=new RetrieveVirtualItemEventArgs(staleIndex);typeof(ListView).GetMethod("OnRetrieveVirtualItem",System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Instance).Invoke(files,new object[]{request});
+                        Assert(request.Item!=null&&request.Item.Text=="","Stale native row request supplies an empty item");
+                    }
+                    files.Refresh();await Task.Delay(30);
+                    if(pass==0)Assert(visible.Count==1&&Json.Bool(visible[0],"parent"),"Empty directory retains parent row");
+                    if(pass==1)Assert(visible.Count==0,"Empty search list");
+                }
+                Assert(archive==null&&Selected().Length==0,"Closing clears archive and selection");
+                await OpenArchive(path);GoFolder("素材/");SelectByName("你好.txt");
+                Assert(files.VirtualListSize==visible.Count&&Selected().Length==1,"Reopen compressed TAR after clearing selected list");
+                checks.Add("virtual list transitions from a scrolled selected last row to empty directory, empty search and home; synchronous native row requests and TAR.XZ reopening");
+            }finally{if(archive!=null){entries=originalEntries;BuildTree();GoFolder("素材/");SelectByName("你好.txt");}}
         }
         async Task CheckTaskResults(string output,List<string> checks){
             var originalLauncher=backend.resultLauncher;var requests=new List<System.Diagnostics.ProcessStartInfo>();backend.resultLauncher=info=>requests.Add(info);

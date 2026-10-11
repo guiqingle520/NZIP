@@ -4,7 +4,7 @@ const crypto = require('node:crypto');
 const root = path.resolve(__dirname,'..');
 const product = process.argv[2] || 'NZIP';
 if (!['NZIP','NZIPPaid','NZIPPaidPreview'].includes(product)) throw Error('Unknown edition');
-const paid = product !== 'NZIP', version = paid ? '0.7.0' : require('../package.json').version;
+const paid = product !== 'NZIP', version = paid ? '0.7.1' : require('../package.json').version;
 const upgradeCode = product === 'NZIPPaid' ? 'CF84EF19-0DCF-4AD2-9D15-1B7CDBF9B281' : product === 'NZIPPaidPreview' ? 'BAB9513B-BB98-4C4E-AC82-1A55D7A784B5' : '06765602-7035-4ED7-9DCB-80F02E0E5626';
 const work = path.join(root,paid?`.cache/installer-${product}`:'.cache/installer'), app=path.join(root,`dist/${product}-${version}-win-x64`);
 const xml = s => String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));

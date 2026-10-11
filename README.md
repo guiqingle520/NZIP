@@ -1,6 +1,8 @@
 # NZIP 收费版开发分支
 
-当前 `paid-version` 分支开发原生收费版 0.7.0，首版支持签名设备授权、首次联网激活、永久离线使用、3 个当前登记设备名额、自助解绑换机和购买邮箱设备管理。具体交付与验证见 [收费版说明](docs/commercial/implementation-v0.7.0.md)，部署见 [授权服务](server/README.md)。正式域名、邮件服务和正式密钥尚需发行方配置，当前安装包为测试构建。
+当前 `paid-version` 分支开发原生收费版 0.7.1，首版支持签名设备授权、首次联网激活、永久离线使用、3 个当前登记设备名额、自助解绑换机和购买邮箱设备管理。具体交付与验证见 [收费版说明](docs/commercial/implementation-v0.7.0.md)，部署见 [授权服务](server/README.md)。正式域名、邮件服务和正式密钥尚需发行方配置，当前安装包为测试构建。
+
+0.7.1 修复目录切换、搜索和关闭压缩包时虚拟列表数据与 Windows 行号不同步造成的索引越界。安装包为 `dist/NZIPPaidPreview-0.7.1-Setup-x64.msi`；编译和打包核验通过，新增界面回归被本机应用控制拦截，尚未运行完成，详见 [修复验证记录](docs/commercial/validation-v0.7.1.md)。
 
 既有代码继续适用原 MIT 许可，新增商业授权实现的范围见 [LICENSES.md](LICENSES.md)。
 

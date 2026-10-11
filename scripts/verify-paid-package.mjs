@@ -5,7 +5,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 const product = process.argv[2] || 'NZIPPaidPreview';
 if (!['NZIPPaidPreview', 'NZIPPaid'].includes(product)) throw Error('Unknown paid edition');
-const stem = product + '-0.7.0', original = path.resolve('dist', stem + '-win-x64');
+const stem = product + '-0.7.1', original = path.resolve('dist', stem + '-win-x64');
 const resultDirectory = path.resolve('test-results/paid-package', randomUUID()); fs.mkdirSync(resultDirectory, { recursive: true });
 function extract(filename, to) {
   const result = spawnSync(path.resolve('vendor/7zip/7z.exe'), ['x', path.resolve(filename), '-o' + to, '-y'], { windowsHide: true, encoding: 'utf8' });

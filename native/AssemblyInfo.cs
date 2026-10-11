@@ -3,8 +3,8 @@ using System.Reflection;
 [assembly:AssemblyProduct(NZIP.Edition.Id)]
 [assembly:AssemblyDescription("NZIP lightweight local archiver")]
 #if NZIP_PAID
-[assembly:AssemblyVersion("0.7.0.0")]
-[assembly:AssemblyFileVersion("0.7.0.0")]
+[assembly:AssemblyVersion("0.7.1.0")]
+[assembly:AssemblyFileVersion("0.7.1.0")]
 #else
 [assembly:AssemblyVersion("0.6.2.0")]
 [assembly:AssemblyFileVersion("0.6.2.0")]
