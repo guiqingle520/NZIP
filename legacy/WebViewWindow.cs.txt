@@ -1,0 +1,44 @@
+    sealed class MainWindow:Form {
+        readonly Backend backend;readonly WebView2 web=new WebView2();readonly Label loading=new Label();readonly Stopwatch started=Stopwatch.StartNew();J initial;bool ready,exitPending,closing;readonly string pipeName;NamedPipeServerStream pipe;
+        [DllImport("user32.dll")]static extern bool ReleaseCapture();
+        [DllImport("user32.dll")]static extern IntPtr SendMessage(IntPtr hwnd,int message,IntPtr wParam,IntPtr lParam);
+        public MainWindow(Backend b,string[] args,string pipeName){
+            backend=b;this.pipeName=pipeName;initial=Program.LaunchRequest(args);Text="NZIP";ClientSize=new Size(1000,700);MinimumSize=new Size(780,520);StartPosition=FormStartPosition.CenterScreen;FormBorderStyle=FormBorderStyle.None;BackColor=Color.FromArgb(247,248,250);Icon=Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+            web.Dock=DockStyle.Fill;Controls.Add(web);loading.Dock=DockStyle.Fill;loading.BackColor=BackColor;loading.ForeColor=Color.FromArgb(107,93,211);loading.Font=new Font("Microsoft YaHei UI",18);loading.TextAlign=ContentAlignment.MiddleCenter;loading.Text="NZIP\n\n正在启动…";Controls.Add(loading);loading.BringToFront();backend.Changed+=(name,value)=>{var json=Json.Encode(Json.Obj("kind","event","name",name,"payload",value));Post(json);};
+            Shown+=async(s,e)=>await Initialize();FormClosing+=OnClosing;FormClosed+=(s,e)=>{closing=true;if(pipe!=null)pipe.Dispose();};
+        }
+        async Task Initialize(){
+            try{
+                var env=await CoreWebView2Environment.CreateAsync(null,Path.Combine(backend.Profile,"WebView2"));await web.EnsureCoreWebView2Async(env);var core=web.CoreWebView2;
+                core.Settings.AreDevToolsEnabled=Environment.GetEnvironmentVariable("NZIP_TEST_MODE")=="1";core.Settings.IsStatusBarEnabled=false;core.Settings.AreDefaultContextMenusEnabled=false;core.Settings.AreBrowserAcceleratorKeysEnabled=false;
+                core.SetVirtualHostNameToFolderMapping("nzip.local",Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"ui"),CoreWebView2HostResourceAccessKind.DenyCors);
+                core.NavigationStarting+=(s,e)=>{if(!e.Uri.StartsWith("https://nzip.local/",StringComparison.Ordinal))e.Cancel=true;};core.NewWindowRequested+=(s,e)=>e.Handled=true;core.DownloadStarting+=(s,e)=>e.Cancel=true;core.PermissionRequested+=(s,e)=>e.State=CoreWebView2PermissionState.Deny;
+                core.WebMessageReceived+=OnMessage;core.Navigate("https://nzip.local/index.html");StartPipeListener();
+            }catch(Exception e){Opacity=1;ShowInTaskbar=true;MessageBox.Show(this,"启动失败："+e.Message+"\n请确认已安装 Microsoft Edge WebView2 Runtime。","NZIP",MessageBoxButtons.OK,MessageBoxIcon.Error);Close();}
+        }
+        void StartPipeListener(){Task.Run((Action)ListenPipe);}
+        void ListenPipe(){while(!closing){try{using(var server=new NamedPipeServerStream(pipeName,PipeDirection.In)){pipe=server;server.WaitForConnection();using(var reader=new StreamReader(server)){var line=reader.ReadLine();if(line==null)continue;var args=Json.Strings(Json.Decode(line),"args");BeginInvoke((Action)(()=>{if(WindowState==FormWindowState.Minimized)WindowState=FormWindowState.Normal;Activate();var request=Program.LaunchRequest(args);if(request!=null){if(ready)Emit("launch-request",request);else initial=request;}}));}}}catch(IOException){}catch(ObjectDisposedException){break;}}}
+        void Post(string json){if(closing||IsDisposed)return;try{BeginInvoke((Action)(()=>{if(!closing&&web.CoreWebView2!=null)web.CoreWebView2.PostWebMessageAsJson(json);}));}catch(InvalidOperationException){}}
+        void Emit(string name,object value){Post(Json.Encode(Json.Obj("kind","event","name",name,"payload",value)));}
+        async void OnMessage(object sender,CoreWebView2WebMessageReceivedEventArgs e){
+            if(!e.Source.StartsWith("https://nzip.local/",StringComparison.Ordinal))return;J request;try{request=Json.Decode(e.WebMessageAsJson);}catch(Exception){return;}
+            var action=Json.Str(request,"action");var id=Json.Get(request,"id");var args=Json.Array(Json.Get(request,"args"));J result;
+            try{
+                if(action=="drop-files"){var files=e.AdditionalObjects.OfType<CoreWebView2File>().Select(f=>f.Path).ToArray();await web.ExecuteScriptAsync("handleDroppedPaths("+Json.Encode(files)+")");return;}
+                if(action=="window"){var a=args.Length>0?Convert.ToString(args[0]):"";if(a=="minimize")WindowState=FormWindowState.Minimized;if(a=="maximize")WindowState=WindowState==FormWindowState.Maximized?FormWindowState.Normal:FormWindowState.Maximized;if(a=="close")Close();if(a=="start-drag"){ReleaseCapture();SendMessage(Handle,0xA1,new IntPtr(2),IntPtr.Zero);}if(a=="test-resize"&&Environment.GetEnvironmentVariable("NZIP_TEST_MODE")=="1"&&args.Length==3)ClientSize=new Size(Convert.ToInt32(args[1]),Convert.ToInt32(args[2]));result=Json.Obj("ok",true);}
+                else if(action=="ready"){ready=true;loading.Visible=false;if(initial!=null){Emit("launch-request",initial);initial=null;}var report=Environment.GetEnvironmentVariable("NZIP_STARTUP_REPORT");if(report!=null)File.WriteAllText(report,Json.Encode(Json.Obj("backendToReadyMs",started.ElapsedMilliseconds)));result=Json.Obj("ok",true);}
+                else if(action=="choose")result=Choose(args);
+                else if(action=="copy-text"){Clipboard.SetText(Convert.ToString(args[0]));result=Json.Obj("ok",true);}
+                else result=await Task.Run(()=>backend.Dispatch(action,args));
+            }catch(Exception error){result=ArchiveError.Failure(error);}Post(Json.Encode(Json.Obj("kind","reply","id",id,"result",result)));
+        }
+        J Choose(object[] args){var kind=args.Length>0?Convert.ToString(args[0]):"";var defaultPath=args.Length>1?Convert.ToString(args[1]):"";string[] paths=new string[0];
+            if(kind=="folder"||kind=="destination"){using(var d=new FolderBrowserDialog{Description="选择文件夹",SelectedPath=defaultPath??"",ShowNewFolderButton=true})if(d.ShowDialog(this)==DialogResult.OK)paths=new[]{d.SelectedPath};}
+            else if(kind=="output"){using(var d=new SaveFileDialog{Title="保存压缩包",Filter="压缩文件|*.zip;*.7z;*.tar|所有文件|*.*",FileName=defaultPath??"",OverwritePrompt=false})if(d.ShowDialog(this)==DialogResult.OK)paths=new[]{d.FileName};}
+            else{using(var d=new OpenFileDialog{Title=kind=="archives"?"打开压缩包":"添加文件",Multiselect=true,Filter=kind=="archives"?"压缩文件|*.zip;*.7z;*.rar;*.tar;*.gz;*.bz2;*.xz;*.iso;*.cab;*.wim;*.tgz;*.001|所有文件|*.*":"所有文件|*.*"}){if(Directory.Exists(defaultPath))d.InitialDirectory=defaultPath;if(d.ShowDialog(this)==DialogResult.OK)paths=d.FileNames;}}
+            return Json.Obj("ok",true,"paths",paths);
+        }
+        async void OnClosing(object sender,FormClosingEventArgs e){if(backend.Busy){e.Cancel=true;if(exitPending)return;if(MessageBox.Show(this,"还有任务未完成。是否取消任务并退出？临时文件将被清理。","NZIP",MessageBoxButtons.YesNo,MessageBoxIcon.Question)!=DialogResult.Yes)return;exitPending=true;backend.CancelAll();while(backend.Busy)await Task.Delay(30);Close();}}
+        protected override void WndProc(ref Message m){base.WndProc(ref m);if(m.Msg==0x84&&WindowState==FormWindowState.Normal){var p=PointToClient(new Point((short)((long)m.LParam&0xffff),(short)(((long)m.LParam>>16)&0xffff)));const int b=6;bool left=p.X<b,right=p.X>=Width-b,top=p.Y<b,bottom=p.Y>=Height-b;int hit=top?(left?13:right?14:12):bottom?(left?16:right?17:15):left?10:right?11:0;if(hit!=0)m.Result=new IntPtr(hit);}}
+    }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "nzip",
+  "version": "0.6.2",
+  "description": "NZIP — 无广告的本地压缩与解压工具",
+  "author": "NZIP",
+  "license": "MIT",
+  "scripts": {
+    "start": "node scripts/start-native.js",
+    "build": "powershell -NoProfile -File scripts/build-native.ps1",
+    "test": "node --test tests/native-engine.test.js tests/archive-tools.test.js",
+    "test:ui": "node scripts/smoke-native.js",
+    "test:legacy-engine": "node --test tests/engine.test.js",
+    "benchmark:startup": "node scripts/benchmark-native.js",
+    "test:package": "node scripts/verify-native-package.js",
+    "benchmark:normal": "node scripts/benchmark-native.js",
+    "build:installer": "powershell -NoProfile -File scripts/build-installer.ps1",
+    "test:shell": "powershell -NoProfile -File scripts/test-shell.ps1",
+    "test:installer": "node scripts/verify-installer.js",
+    "test:installer-location": "powershell -NoProfile -File scripts/test-installer-location.ps1"
+  },
+  "devDependencies": {
+    "playwright": "1.64.0"
+  },
+  "private": true
+}
