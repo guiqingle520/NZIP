@@ -86,6 +86,9 @@ namespace NZIP {
         }
         public J List(string archive,string password,CancellationToken cancel,Action<int> progress=null,int codePage=0){using(var opened=OpenRead(archive,password,cancel,codePage)){var data=opened.Data??ListRaw(opened.Path,password,cancel,progress,codePage);if(opened.Temp!=null){data["type"]="tar."+ArchiveFormats.Normalize(opened.OuterType);data["path"]=Json.Absolute(archive);data["name"]=Path.GetFileName(archive);data["archiveSize"]=new FileInfo(archive).Length;}return data;}}
         public J Test(string archive,string password,CancellationToken cancel,Action<int> progress=null,int codePage=0) {
+            using(LicenseGate.Enter())return TestCore(archive,password,cancel,progress,codePage);
+        }
+        J TestCore(string archive,string password,CancellationToken cancel,Action<int> progress,int codePage) {
             using(var opened=OpenRead(archive,password,cancel,codePage)){if(opened.Data==null)ListRaw(opened.Path,password,cancel,null,codePage);Run(new[]{"t","-p"+(password??"")}.Concat(CodePageOptions(codePage)).Concat(new[]{"--",opened.Path}),null,cancel,progress);}return Json.Obj("message","完整性测试通过（格式支持时校验 CRC）");
         }
         public static void VerifyTree(string path,CancellationToken cancel) {
@@ -100,6 +103,9 @@ namespace NZIP {
             else File.Copy(source,destination,false);
         }
         public J Create(J p,CancellationToken cancel,Action<int> progress=null) {
+            using(LicenseGate.Enter())return CreateCore(p,cancel,progress);
+        }
+        J CreateCore(J p,CancellationToken cancel,Action<int> progress) {
             var sources=Json.Strings(p,"sources").Select(Json.Absolute).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();if(sources.Length==0)throw new ArchiveError("请先添加需要压缩的文件");
             var destination=Json.Absolute(Json.Str(p,"destination"));var format=ArchiveFormats.Normalize(Json.Str(p,"format","zip"));long level=Json.Num(p,"level",5);var password=Json.Str(p,"password");var volume=Json.Str(p,"volume");
             if(!ArchiveFormats.CreateFormats.Contains(format)||!new long[]{0,1,3,5,7,9}.Contains(level))throw new ArchiveError("不支持的压缩格式或级别");
@@ -127,6 +133,9 @@ namespace NZIP {
         }
         static void ValidateSelected(string[] selected,J data){var valid=new HashSet<string>(Json.Array(Json.Get(data,"entries")).Select(e=>Json.Str(Json.Map(e),"path")));foreach(var s in selected){SafeEntry(s);if(!valid.Contains(s))throw new ArchiveError("所选文件已不在压缩包中");}}
         public J Extract(J p,CancellationToken cancel,Action<int> progress=null) {
+            using(LicenseGate.Enter())return ExtractCore(p,cancel,progress);
+        }
+        J ExtractCore(J p,CancellationToken cancel,Action<int> progress) {
             var archive=Json.Absolute(Json.Str(p,"archive"));var destination=Json.Absolute(Json.Str(p,"destination"));var password=Json.Str(p,"password");var selected=Json.Strings(p,"selected");int codePage=(int)Json.Num(p,"codePage");using(var opened=OpenRead(archive,password,cancel,codePage)){var data=opened.Data??ListRaw(opened.Path,password,cancel,null,codePage);
             ValidateSelected(selected,data);if(Directory.Exists(destination)||File.Exists(destination))throw new ArchiveError("目标文件夹已存在，请选择新的文件夹名称","DEST_EXISTS");
             var outputEntries=Json.Array(Json.Get(data,"entries")).Select(Json.Map).Where(e=>selected.Length==0||selected.Any(s=>Json.Str(e,"path")==s||Json.Str(e,"path").StartsWith(s.TrimEnd('/')+"/",StringComparison.Ordinal))).ToArray();
@@ -139,6 +148,9 @@ namespace NZIP {
             }
         }}
         public J Modify(J p,CancellationToken cancel,Action<int> progress=null) {
+            using(LicenseGate.Enter())return ModifyCore(p,cancel,progress);
+        }
+        J ModifyCore(J p,CancellationToken cancel,Action<int> progress) {
             if(Json.Num(p,"codePage")!=0)throw new ArchiveError("非默认代码页下请先解压，再重新打包修改");
             var archive=Json.Absolute(Json.Str(p,"archive"));var password=Json.Str(p,"password");var action=Json.Str(p,"action");var data=List(archive,password,cancel);var selected=Json.Strings(p,"selected");var sources=Json.Strings(p,"sources").Select(Json.Absolute).ToArray();
             if(!new[]{"zip","7z"}.Contains(Json.Str(data,"type").ToLowerInvariant()))throw new ArchiveError("仅支持修改 ZIP 和 7Z 压缩包");

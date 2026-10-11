@@ -11,6 +11,9 @@ namespace NZIP {
         [DllImport("amsi.dll")]static extern void AmsiUninitialize(IntPtr context);
         [DllImport("amsi.dll",CharSet=CharSet.Unicode)]static extern int AmsiScanBuffer(IntPtr context,byte[] buffer,uint length,string name,IntPtr session,out int result);
         public static J Scan(ArchiveEngine engine,J payload,CancellationToken cancel,Action<int> progress=null) {
+            using(LicenseGate.Enter())return ScanCore(engine,payload,cancel,progress);
+        }
+        static J ScanCore(ArchiveEngine engine,J payload,CancellationToken cancel,Action<int> progress) {
             cancel.ThrowIfCancellationRequested();
             IntPtr context=IntPtr.Zero;
             try {

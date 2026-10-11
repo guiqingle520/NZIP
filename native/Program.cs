@@ -24,6 +24,10 @@ namespace NZIP {
                 try{if(args.Contains("--register-shell"))ShellIntegration.Register(Application.ExecutablePath,!args.Contains("--no-context-menu"));else ShellIntegration.Unregister(Application.ExecutablePath);return 0;}catch(Exception){return 1;}
             }
             if(args.Contains("--check-runtime"))return 0;
+            if(Edition.Paid&&(args.Contains("--license-import")||args.Contains("--license-status"))){
+                Console.SetOut(new StreamWriter(Console.OpenStandardOutput(),new UTF8Encoding(false)){AutoFlush=true});
+                try{if(args.Contains("--license-import")){int index=Array.IndexOf(args,"--license-import");if(index+1>=args.Length)throw new ArchiveError("缺少授权文件路径");var file=new FileInfo(args[index+1]);if(file.Length>16384)throw new ArchiveError("授权文件过大");LicenseRuntime.Current.Import(File.ReadAllText(file.FullName,new UTF8Encoding(false,true)));}Console.WriteLine(Json.Encode(Json.Obj("ok",true,"license",LicenseRuntime.Current.Status())));return 0;}catch(Exception error){Console.WriteLine(Json.Encode(ArchiveError.Failure(error)));return 1;}
+            }
             if(args.Contains("--engine-rpc")){
                 Console.SetIn(new StreamReader(Console.OpenStandardInput(),new UTF8Encoding(false)));
                 Console.SetOut(new StreamWriter(Console.OpenStandardOutput(),new UTF8Encoding(false)){AutoFlush=true});
@@ -32,8 +36,8 @@ namespace NZIP {
                     Console.WriteLine(Json.Encode(Json.Obj("ok",true,"data",data)));
                 }catch(Exception e){Console.WriteLine(Json.Encode(ArchiveError.Failure(e)));}return 0;
             }
-            var profile=Environment.GetEnvironmentVariable("NZIP_USER_DATA")??Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),"NZIP");
-            string key;using(var sha=SHA256.Create())key="NZIP-"+BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(profile.ToLowerInvariant()))).Replace("-","").Substring(0,24);
+            var profile=Environment.GetEnvironmentVariable("NZIP_USER_DATA")??Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),Edition.Id);
+            string key;using(var sha=SHA256.Create())key=Edition.Id+"-"+BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(profile.ToLowerInvariant()))).Replace("-","").Substring(0,24);
             if(args.Contains("--check-running")){try{using(var existing=Mutex.OpenExisting(key))return 3;}catch(WaitHandleCannotBeOpenedException){return 0;}}
             if(args.Contains("--new-window"))key+="-"+Guid.NewGuid().ToString("N");
             AppContext.SetSwitch("Switch.System.IO.UseLegacyPathHandling",false);AppContext.SetSwitch("Switch.System.IO.BlockLongPaths",false);

@@ -22,6 +22,9 @@ namespace NZIP {
         }
         public static string Comment(string path,int page){using(var stream=File.OpenRead(path)){long end=EndRecord(stream);stream.Position=end+20;var reader=new BinaryReader(stream);int n=reader.ReadUInt16();var bytes=reader.ReadBytes(n);try{return new UTF8Encoding(false,true).GetString(bytes);}catch(DecoderFallbackException){return NameEncoding(0,page).GetString(bytes);}}}
         public static J WriteComment(ArchiveEngine engine,J p,CancellationToken token){
+            using(LicenseGate.Enter())return WriteCommentCore(engine,p,token);
+        }
+        static J WriteCommentCore(ArchiveEngine engine,J p,CancellationToken token){
             var archive=Json.Absolute(Json.Str(p,"archive"));if(!Path.GetExtension(archive).Equals(".zip",StringComparison.OrdinalIgnoreCase))throw new ArchiveError("注释编辑目前支持 ZIP");
             var bytes=Encoding.UTF8.GetBytes(Json.Str(p,"comment"));if(bytes.Length>65535)throw new ArchiveError("ZIP 注释最多 65535 字节");
             using(var stage=new TempFolder(Path.GetDirectoryName(archive),".nzip-comment-")){
@@ -62,6 +65,9 @@ namespace NZIP {
             var best=scores.OrderByDescending(s=>Json.Num(s,"score")).FirstOrDefault();if(best==null)throw new ArchiveError("无法检测编码，请手动选择");return Json.Obj("codePage",Json.Num(best,"page"),"message","启发式检测结果；旧 ZIP 编码没有唯一标识，若仍乱码请手动选择。","candidates",scores);
         }
         public static J Repair(ArchiveEngine engine,J p,CancellationToken token,Action<int> progress=null){
+            using(LicenseGate.Enter())return RepairCore(engine,p,token,progress);
+        }
+        static J RepairCore(ArchiveEngine engine,J p,CancellationToken token,Action<int> progress){
             string archive=Json.Absolute(Json.Str(p,"archive")),destination=Json.Absolute(Json.Str(p,"destination"));if(String.Equals(archive,destination,StringComparison.OrdinalIgnoreCase)||File.Exists(destination)||Directory.Exists(destination))throw new ArchiveError("修复结果必须保存到新的 ZIP 文件，原文件保留");
             if(new FileInfo(archive).Length>2L*1024*1024*1024)throw new ArchiveError("当前修复器支持 2 GB 以内的普通 ZIP");
             int recovered=0,skipped=0;long expanded=0;var seen=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -97,6 +103,9 @@ namespace NZIP {
             return Json.Obj("path",destination,"recovered",recovered,"skipped",skipped,"message","修复完成：恢复 "+recovered+" 项，跳过 "+skipped+" 个损坏或不支持的条目；原文件保留");
         }
         public static J RecoverPassword(ArchiveEngine engine,J p,CancellationToken token,Action<int> progress=null){
+            using(LicenseGate.Enter())return RecoverPasswordCore(engine,p,token,progress);
+        }
+        static J RecoverPasswordCore(ArchiveEngine engine,J p,CancellationToken token,Action<int> progress){
             string archive=Json.Absolute(Json.Str(p,"archive"));if(!new[]{".zip",".7z"}.Contains(Path.GetExtension(archive).ToLowerInvariant()))throw new ArchiveError("密码恢复支持 ZIP / 7Z，请仅用于有权访问的文件");
             try{var listed=engine.List(archive,"",token);if(!Json.Bool(listed,"encrypted"))throw new ArchiveError("压缩包未加密，无需恢复密码","NOT_ENCRYPTED");}catch(ArchiveError error){if(error.Code!="PASSWORD_REQUIRED")throw;}
             var candidates=Json.Strings(p,"candidates");var dictionary=Json.Str(p,"dictionary");string chars=Json.Str(p,"characters","0123456789");int min=(int)Json.Num(p,"minLength",1),max=(int)Json.Num(p,"maxLength",4);

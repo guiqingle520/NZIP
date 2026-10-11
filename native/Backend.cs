@@ -31,20 +31,21 @@ namespace NZIP {
         public void CancelAll(){lock(gate){foreach(var w in queue){w.Cancel.Cancel();w.Job["status"]="cancelled";w.Job["finishedAt"]=Json.Now;w.Cancel.Dispose();if(w.Completion!=null)w.Completion.TrySetCanceled();}queue.Clear();if(active!=null)active.Cancel.Cancel();}Jobs();}
         public Task<J> ExtractForOpen(J payload){var completion=new TaskCompletionSource<J>(TaskCreationOptions.RunContinuationsAsynchronously);payload["openAfterExtract"]=false;Enqueue("extract",payload,completion);return completion.Task;}
         J Enqueue(string kind,J payload,TaskCompletionSource<J> completion=null){
+            var capability=LicenseGate.Capture();
             if(!new[]{"create","extract","test","modify","scan","comment","repair","recover"}.Contains(kind))throw new ArchiveError("无效操作");
-            var work=new Work{Id=Guid.NewGuid().ToString(),Kind=kind,Payload=payload,Completion=completion};work.Job=Json.Obj("id",work.Id,"type",kind,"label",Path.GetFileName(Json.Str(payload,kind=="create"?"destination":"archive")),"status","queued","percent",0,"createdAt",Json.Now);
+            var work=new Work{Id=Guid.NewGuid().ToString(),Kind=kind,Payload=payload,Completion=completion,Capability=capability};work.Job=Json.Obj("id",work.Id,"type",kind,"label",Path.GetFileName(Json.Str(payload,kind=="create"?"destination":"archive")),"status","queued","percent",0,"createdAt",Json.Now);
             bool start;lock(gate){jobs.Insert(0,work.Job);if(jobs.Count>100)jobs.RemoveAt(jobs.Count-1);queue.Enqueue(work);start=!worker;worker=true;}Jobs();if(start)Task.Run((Action)Drain);return Json.Obj("ok",true,"id",work.Id);
         }
         void Drain(){
             while(true){Work w;lock(gate){if(queue.Count==0){worker=false;return;}w=queue.Dequeue();active=w;w.Job["status"]="running";w.Job["startedAt"]=Json.Now;}Jobs();
                 Action<int> progress=n=>{lock(gate)w.Job["percent"]=n;Jobs();};J result=null;Exception failure=null;
-                try{
+                try{using(LicenseGate.Admitted(w.Capability)){
                     var token=w.Cancel.Token;
                     if(w.Kind=="create")result=Engine.Create(w.Payload,token,progress);else if(w.Kind=="extract")result=Engine.Extract(w.Payload,token,progress);else if(w.Kind=="modify")result=Engine.Modify(w.Payload,token,progress);else if(w.Kind=="scan")result=ArchiveScanner.Scan(Engine,w.Payload,token,progress);else if(w.Kind=="comment")result=ArchiveTools.WriteComment(Engine,w.Payload,token);else if(w.Kind=="repair")result=ArchiveTools.Repair(Engine,w.Payload,token,progress);else if(w.Kind=="recover")result=ArchiveTools.RecoverPassword(Engine,w.Payload,token,progress);else result=Engine.Test(Json.Str(w.Payload,"archive"),Json.Str(w.Payload,"password"),token,progress,(int)Json.Num(w.Payload,"codePage"));
                     if(w.Kind=="create"){try{Remember(Engine.List(Json.Str(result,"path"),Json.Str(w.Payload,"password"),CancellationToken.None));}catch(Exception){}}
                     if(w.Kind=="extract"){bool open;lock(gate)open=Json.Bool(w.Payload,"openAfterExtract",Json.Bool(settings,"openAfterExtract"));if(open){try{Reveal(Json.Str(result,"path"),true);}catch(Exception){}}}
                     lock(gate){w.Job["status"]="completed";w.Job["percent"]=100;w.Job["result"]=result;}
-                }catch(Exception e){failure=e;lock(gate){w.Job["status"]=e is OperationCanceledException?"cancelled":"failed";w.Job["error"]=e is OperationCanceledException?"操作已取消":e.Message;w.Job["code"]=Json.Get(ArchiveError.Failure(e),"code");}}
+                }}catch(Exception e){failure=e;lock(gate){w.Job["status"]=e is OperationCanceledException?"cancelled":"failed";w.Job["error"]=e is OperationCanceledException?"操作已取消":e.Message;w.Job["code"]=Json.Get(ArchiveError.Failure(e),"code");}}
                 finally{lock(gate){w.Job["finishedAt"]=Json.Now;active=null;}w.Cancel.Dispose();Jobs();if(w.Completion!=null){if(failure is OperationCanceledException)w.Completion.TrySetCanceled();else if(failure!=null)w.Completion.TrySetException(failure);else w.Completion.TrySetResult(result);}}
             }
         }
@@ -82,6 +83,6 @@ namespace NZIP {
         void Reveal(string p,bool open){if(!File.Exists(p)&&!Directory.Exists(p))throw new ArchiveError("文件或文件夹已不存在");resultLauncher(new ProcessStartInfo("explorer.exe",open?ArchiveEngine.Quote(p):"/select,"+ArchiveEngine.Quote(p)){UseShellExecute=false,CreateNoWindow=true});}
         static void ContextMenus(bool enabled){ShellIntegration.SetContextMenus(System.Windows.Forms.Application.ExecutablePath,enabled);}
         public void Dispose(){CancelAll();previews.Dispose();}
-        class Work{public string Id,Kind;public J Payload,Job;public TaskCompletionSource<J> Completion;public readonly CancellationTokenSource Cancel=new CancellationTokenSource();}
+        class Work{public bool Capability;public string Id,Kind;public J Payload,Job;public TaskCompletionSource<J> Completion;public readonly CancellationTokenSource Cancel=new CancellationTokenSource();}
     }
 }

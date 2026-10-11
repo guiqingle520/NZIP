@@ -3,7 +3,7 @@
   "version": "0.6.2",
   "description": "NZIP — 无广告的本地压缩与解压工具",
   "author": "NZIP",
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSES.md",
   "scripts": {
     "start": "node scripts/start-native.js",
     "build": "powershell -NoProfile -File scripts/build-native.ps1",
@@ -16,7 +16,11 @@
     "build:installer": "powershell -NoProfile -File scripts/build-installer.ps1",
     "test:shell": "powershell -NoProfile -File scripts/test-shell.ps1",
     "test:installer": "node scripts/verify-installer.js",
-    "test:installer-location": "powershell -NoProfile -File scripts/test-installer-location.ps1"
+    "test:installer-location": "powershell -NoProfile -File scripts/test-installer-location.ps1",
+    "test:licensing": "powershell -NoProfile -File scripts/test-licensing.ps1",
+    "test:licensing-portal": "node --test tests/licensing-portal.test.mjs",
+    "build:paid": "powershell -NoProfile -File scripts/build-native.ps1 -Edition Paid",
+    "build:paid-installer": "powershell -NoProfile -File scripts/build-installer.ps1 -Edition Paid"
   },
   "devDependencies": {
     "playwright": "1.64.0"

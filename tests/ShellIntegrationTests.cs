@@ -22,19 +22,21 @@ static class ShellIntegrationTests {
         finally{Registry.CurrentUser.DeleteSubKeyTree(sandboxPath,false);using(var parent=Registry.CurrentUser.OpenSubKey(@"Software\NZIP.IntegrationTests",true))if(parent!=null&&parent.SubKeyCount==0&&parent.ValueCount==0)Registry.CurrentUser.DeleteSubKey(@"Software\NZIP.IntegrationTests",false);}
     }
     static void Run(){
-        var exe=Path.Combine(Path.GetTempPath(),"NZIP 中文 测试","NZIP.exe");
+        var exe=Path.Combine(Path.GetTempPath(),"NZIP 中文 测试",Edition.Executable);
+        var appId=Edition.Id;
         const string classes=@"Software\Classes\";
         const string openWith=classes+@".zip\OpenWithProgids";
         const string choice=@"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.zip\UserChoice";
         Seed(classes+".zip","","Existing.Zip");Seed(choice,"ProgId","Existing.Zip");Seed(choice,"Hash","do-not-change");Seed(openWith,"Other.Archive","");
+        if(Edition.Paid){Seed(classes+@"Applications\NZIP.exe\shell\open\command","","free-edition-marker");Seed(classes+@"SystemFileAssociations\.zip\shell\NZIP","MUIVerb","free-menu-marker");}
         ShellIntegration.Register(exe,true,false);
         Assert(ShellIntegration.IsRegistered(exe),"Open With app not registered");
         Assert(ShellIntegration.IsContextEnabled(exe),"Context menu not registered");
         foreach(var ext in ShellIntegration.Extensions){
-            Assert(Read(classes+"."+ext+@"\OpenWithProgids","NZIP.Archive")!=null,"Missing OpenWithProgids: "+ext);
-            Assert((string)Read(@"Software\NZIP\Capabilities\FileAssociations","."+ext)=="NZIP.Archive","Missing capability: "+ext);
-            var prefix=classes+@"SystemFileAssociations\."+ext+@"\shell\NZIP";
-            Assert((string)Read(prefix,"MUIVerb")=="NZIP","Missing submenu: "+ext);
+            Assert(Read(classes+"."+ext+@"\OpenWithProgids",appId+".Archive")!=null,"Missing OpenWithProgids: "+ext);
+            Assert((string)Read(@"Software\"+appId+@"\Capabilities\FileAssociations","."+ext)==appId+".Archive","Missing capability: "+ext);
+            var prefix=classes+@"SystemFileAssociations\."+ext+@"\shell\"+appId;
+            Assert((string)Read(prefix,"MUIVerb")==appId,"Missing submenu: "+ext);
             Assert((string)Read(prefix+@"\shell\01.Open\command","")=="\""+exe+"\" --open \"%1\"","Open command quoting");
             Assert((string)Read(prefix+@"\shell\02.ExtractFolder\command","")=="\""+exe+"\" --extract-folder \"%1\"","Quick extract command quoting");
         }
@@ -42,13 +44,14 @@ static class ShellIntegrationTests {
         Assert((string)Read(choice,"Hash")=="do-not-change","Changed UserChoice hash");
         ShellIntegration.SetContextMenus(exe,false,false);
         Assert(!ShellIntegration.IsContextEnabled(exe)&&ShellIntegration.IsRegistered(exe),"Context toggle removed Open With registration");
-        var newer=Path.Combine(Path.GetTempPath(),"NZIP newer","NZIP.exe");ShellIntegration.Register(newer,true,false);
+        var newer=Path.Combine(Path.GetTempPath(),"NZIP newer",Edition.Executable);ShellIntegration.Register(newer,true,false);
         ShellIntegration.Unregister(exe,false);
         Assert(ShellIntegration.IsRegistered(newer)&&ShellIntegration.IsContextEnabled(newer),"Old uninstall removed newer registration");
         ShellIntegration.Unregister(newer,false);
         Assert(!ShellIntegration.IsRegistered(newer)&&!ShellIntegration.IsContextEnabled(newer),"Uninstall left app/menu registration");
-        Assert(Read(openWith,"NZIP.Archive")==null&&Read(openWith,"Other.Archive")!=null,"Uninstall removed another app");
+        Assert(Read(openWith,appId+".Archive")==null&&Read(openWith,"Other.Archive")!=null,"Uninstall removed another app");
         Assert((string)Read(classes+".zip","")=="Existing.Zip"&&(string)Read(choice,"Hash")=="do-not-change","Uninstall changed existing default");
-        Assert(Read(@"Software\RegisteredApplications","NZIP")==null,"Uninstall left capabilities");
+        Assert(Read(@"Software\RegisteredApplications",appId)==null,"Uninstall left capabilities");
+        if(Edition.Paid){Assert((string)Read(classes+@"Applications\NZIP.exe\shell\open\command","")=="free-edition-marker","Paid registration touched free app");Assert((string)Read(classes+@"SystemFileAssociations\.zip\shell\NZIP","MUIVerb")=="free-menu-marker","Paid registration touched free menu");}
     }
 }

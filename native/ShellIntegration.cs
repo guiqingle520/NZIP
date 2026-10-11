@@ -8,13 +8,15 @@ namespace NZIP {
     public static class ShellIntegration {
         public static readonly string[] Extensions=ArchiveFormats.ReadExtensions;
         const string Classes=@"Software\Classes\";
-        const string ProgId="NZIP.Archive";
+        static readonly string ProgId=Edition.Id+".Archive";
+        static string Identity(string value){return Edition.Paid&&value!=null?System.Text.RegularExpressions.Regex.Replace(value,@"NZIP(?!Paid)",Edition.Id):value;}
+        static string IdentityValue(string value){return Edition.Paid&&(value=="NZIP"||value.StartsWith(@"Software\NZIP\")||value=="NZIP 压缩文件"||value=="用 NZIP 打开并预览"||value=="使用 NZIP 压缩…")?Identity(value):value;}
         [DllImport("shell32.dll")]static extern void SHChangeNotify(uint eventId,uint flags,IntPtr item1,IntPtr item2);
         static string Command(string exe,string action){return "\""+exe+"\" "+action+" \"%1\"";}
-        static void Set(string key,string name,string value){using(var k=Registry.CurrentUser.CreateSubKey(key))k.SetValue(name,value,RegistryValueKind.String);}
-        static string Get(string key,string name){using(var k=Registry.CurrentUser.OpenSubKey(key))return k==null?null:k.GetValue(name) as string;}
-        static void Delete(string key){Registry.CurrentUser.DeleteSubKeyTree(key,false);}
-        static void DeleteValue(string key,string name){using(var k=Registry.CurrentUser.OpenSubKey(key,true))if(k!=null)k.DeleteValue(name,false);}
+        static void Set(string key,string name,string value){using(var k=Registry.CurrentUser.CreateSubKey(Identity(key)))k.SetValue(Identity(name),IdentityValue(value),RegistryValueKind.String);}
+        static string Get(string key,string name){using(var k=Registry.CurrentUser.OpenSubKey(Identity(key)))return k==null?null:k.GetValue(Identity(name)) as string;}
+        static void Delete(string key){Registry.CurrentUser.DeleteSubKeyTree(Identity(key),false);}
+        static void DeleteValue(string key,string name){using(var k=Registry.CurrentUser.OpenSubKey(Identity(key),true))if(k!=null)k.DeleteValue(Identity(name),false);}
         static bool Owned(string value,string exe){return value!=null&&value.StartsWith("\""+exe+"\"",StringComparison.OrdinalIgnoreCase);}
         public static bool IsContextEnabled(string exe){return Owned(Get(Classes+@"SystemFileAssociations\.zip\shell\NZIP\shell\01.Open\command",""),exe);}
         public static bool IsRegistered(string exe){return Owned(Get(Classes+@"Applications\NZIP.exe\shell\open\command",""),exe);}

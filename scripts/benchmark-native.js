@@ -7,7 +7,9 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function main() {
   const dir = path.resolve('test-results/performance'); await fs.mkdir(dir, { recursive: true });
   const profile = path.join(dir, `normal-${Date.now()}`), runs = [];
-  for (let i = 0; i < 3; i++) {
+  const count = Number(process.env.NZIP_BENCHMARK_RUNS || 3);
+  if (!Number.isInteger(count) || count < 3 || count > 60) throw Error('Benchmark run count must be 3–60');
+  for (let i = 0; i < count; i++) {
     const report = path.join(dir, `normal-ready-${Date.now()}-${i}.json`);
     const env = { ...process.env, NZIP_USER_DATA: profile, NZIP_STARTUP_REPORT: report };
     delete env.NZIP_TEST_MODE; delete env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS;
@@ -33,7 +35,8 @@ async function main() {
       }
     }
   }
-  const result = { recordedAt: new Date().toISOString(), method: 'Normal launch, no test mode, debugger or CDP. Process spawn to native ready report after initial settings/render. First run uses a fresh profile, next two reuse it. File polled every 25 ms; OS cache not flushed.', runs, medianMs: runs.map(r => r.launchToReadyMs).sort((a, b) => a - b)[1] };
+  const sorted = runs.map(r => r.launchToReadyMs).sort((a, b) => a - b);
+  const result = { recordedAt: new Date().toISOString(), method: 'Normal launch, no test mode, debugger or CDP. Process spawn to native ready report after initial settings/render. First run uses a fresh profile, remaining runs reuse it. File polled every 25 ms; OS cache not flushed.', runs, medianMs: sorted[Math.floor(sorted.length/2)], p95Ms: sorted[Math.ceil(sorted.length*.95)-1] };
   await fs.writeFile(path.join(dir, process.env.NZIP_BENCHMARK_NAME || 'normal-startup.json'), JSON.stringify(result, null, 2));
   console.log(`Normal startup median: ${result.medianMs} ms`);
 }

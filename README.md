@@ -1,4 +1,10 @@
-# NZIP 0.6.2
+# NZIP 收费版开发分支
+
+当前 `paid-version` 分支开发原生收费版 0.7.0，首版支持签名设备授权、首次联网激活、永久离线使用、3 个当前登记设备名额、自助解绑换机和购买邮箱设备管理。具体交付与验证见 [收费版说明](docs/commercial/implementation-v0.7.0.md)，部署见 [授权服务](server/README.md)。正式域名、邮件服务和正式密钥尚需发行方配置，当前安装包为测试构建。
+
+既有代码继续适用原 MIT 许可，新增商业授权实现的范围见 [LICENSES.md](LICENSES.md)。
+
+## 原免费版 0.6.2
 
 无广告、无需登录的 Windows 本地压缩解压工具。主界面已改为 **C# / .NET Framework 4.8 原生 Windows Forms**，无需 WebView2，不包含 Electron、Node.js 或浏览器内核。
 
