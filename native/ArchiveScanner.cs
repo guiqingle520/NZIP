@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using File=NZIP.ArchiveFile;
+using Directory=NZIP.ArchiveDirectory;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -25,7 +27,7 @@ namespace NZIP {
                     var destination=Path.Combine(staging.Path,"contents");
                     engine.Extract(Json.Obj("archive",archive,"password",password,"codePage",codePage,"destination",destination),cancel);
                     var files=Directory.GetFiles(destination,"*",SearchOption.AllDirectories);long total=0;int count=0;
-                    foreach(var file in files){cancel.ThrowIfCancellationRequested();long length=new FileInfo(file).Length;total=checked(total+length);if(length>64L*1024*1024||total>512L*1024*1024)throw new ArchiveError("实际解压内容超出扫描限制；未完成扫描","SCAN_LIMIT");
+                    foreach(var file in files){cancel.ThrowIfCancellationRequested();long length=new FileInfo(ArchivePath.Native(file)).Length;total=checked(total+length);if(length>64L*1024*1024||total>512L*1024*1024)throw new ArchiveError("实际解压内容超出扫描限制；未完成扫描","SCAN_LIMIT");
                         int result;var bytes=File.ReadAllBytes(file);int hr=AmsiScanBuffer(context,bytes.Length==0?new byte[1]:bytes,(uint)Math.Max(1,bytes.Length),Path.GetFileName(archive)+"/"+file.Substring(destination.Length+1),IntPtr.Zero,out result);
                         if(hr!=0)throw new ArchiveError("系统杀毒引擎未完成扫描（0x"+hr.ToString("X8")+"），请检查杀毒软件状态","SCAN_UNAVAILABLE");
                         if(result>=32768||result>=16384&&result<=20479)throw new ArchiveError("系统杀毒引擎检测到威胁或策略阻止："+file.Substring(destination.Length+1)+"。请勿打开该文件。","THREAT_DETECTED");

@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
+using File=NZIP.ArchiveFile;
+using Directory=NZIP.ArchiveDirectory;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -141,6 +143,8 @@ namespace NZIP {
                 string large=Path.Combine(source,"大文本.txt");File.WriteAllText(large,new string('N',12*1024*1024),System.Text.Encoding.UTF8);
                 File.WriteAllText(Path.Combine(source,"脚本.js"),"throw new Error('must open as text');");File.WriteAllText(Path.Combine(source,"程序.exe"),"not executable");
                 File.Copy(Path.Combine(output,"素材","图片.png"),Path.Combine(source,"图片.png"));
+                string deepFolder=String.Join("/",Enumerable.Range(0,10).Select(i=>"目录"+i+"-abcdefghijklmnopqrstuv"));
+                string deepFile=Path.Combine(source,deepFolder.Replace('/',Path.DirectorySeparatorChar),"TableCleanupJob.java");Directory.CreateDirectory(Path.GetDirectoryName(deepFile));File.WriteAllText(deepFile,"class TableCleanupJob {} // 中文长路径");
                 string zip=Path.Combine(output,"本地打开.zip");await Task.Run(()=>backend.Engine.Create(Json.Obj("sources",new[]{source},"destination",zip),CancellationToken.None));
                 await OpenArchive(zip);SelectByName("本地文件");await Execute("open-entry");Assert(folder=="本地文件/"&&launches.Count==0,"Folder activation only browses");
                 SelectByName("..");await Execute("open-entry");Assert(folder==""&&launches.Count==0,"Parent activation navigates");GoFolder("本地文件/");
@@ -163,6 +167,12 @@ namespace NZIP {
                 backend.Changed+=cancelQueued;bool cancelled=false;try{await OpenEntry();}catch(OperationCanceledException){cancelled=true;}finally{backend.Changed-=cancelQueued;}
                 Assert(cancelled&&launches.Count==3&&Directory.GetDirectories(OpenedFilesRoot(preferences)).Length==retained,"Queued cancellation completes without launching and cleans temporary copy");
                 checks.Add("missing association and queued cancellation clean unlaunched copies without hanging or launching");
+                GoFolder("本地文件/"+deepFolder+"/");SelectByName("TableCleanupJob.java");Assert(Json.Str(Selected()[0],"path").Length>260,"Long archive entry selected");await OpenEntry();
+                Assert(launches.Count==4&&launches[3].FileName.EndsWith("notepad.exe",StringComparison.OrdinalIgnoreCase),"Long source entry routes to text editor");string deepOpened=launches[3].Arguments.Trim('"');
+                Assert(deepOpened.Length<260&&Path.GetFileName(deepOpened)=="TableCleanupJob.java"&&File.ReadAllText(deepOpened).Contains("中文长路径"),"Local editor receives shortened independent copy with original bytes/name");
+                var deepJob=Json.Array(Json.Get(backend.Dispatch("init",new object[0]),"jobs")).Select(Json.Map).First(j=>Json.Str(j,"type")=="extract");
+                Assert(Path.GetDirectoryName(deepOpened)==Json.Str(Json.Map(Json.Get(deepJob,"result")),"path"),"Task result directory contains the local editing copy");
+                checks.Add("long archive path is extracted and opened through a short independent local editing copy");
                 Screenshot(output,"local-file-browser");
             }finally{localFileLauncher=originalLauncher;preferences.Values["customTemp"]=customTemp;preferences.Values["tempPath"]=tempPath;}
         }

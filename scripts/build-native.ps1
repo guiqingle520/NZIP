@@ -5,7 +5,7 @@ $version = (Get-Content -LiteralPath (Join-Path $projectRoot 'package.json') -Ra
 $product = 'NZIP'
 $trustSource = $null
 if ($Edition -eq 'Paid') {
-    $version = '0.7.1'
+    $version = '0.7.2'
     $product = if ($Preview) { 'NZIPPaidPreview' } else { 'NZIPPaid' }
     if (-not $PublicConfig) { throw 'Paid build requires -PublicConfig <client-public.json>; private keys are never bundled.' }
     $trust = Get-Content -LiteralPath $PublicConfig -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -35,7 +35,7 @@ $sourceFiles = Get-ChildItem -LiteralPath (Join-Path $projectRoot 'native') -Fil
 if ($Edition -eq 'Paid') { $compilerArgs += '/define:NZIP_PAID'; if ($Preview) { $compilerArgs += '/define:NZIP_PREVIEW' }; $sourceFiles += $trustSource }
 if ($Edition -eq 'Paid') {
     $paidManifest = Join-Path $generated 'NZIP.manifest'
-    $manifestText = (Get-Content -LiteralPath (Join-Path $projectRoot 'native\NZIP.manifest') -Raw -Encoding UTF8).Replace('name="NZIP"',('name="'+$product+'"')).Replace('version="0.6.2.0"','version="0.7.1.0"')
+    $manifestText = (Get-Content -LiteralPath (Join-Path $projectRoot 'native\NZIP.manifest') -Raw -Encoding UTF8).Replace('name="NZIP"',('name="'+$product+'"')).Replace('version="0.6.3.0"','version="0.7.2.0"')
     Set-Content -LiteralPath $paidManifest -Encoding UTF8 -Value $manifestText
     $compilerArgs = @($compilerArgs | Where-Object { -not $_.StartsWith('/win32manifest:') }) + ('/win32manifest:'+$paidManifest)
 }
@@ -43,6 +43,7 @@ if ($Edition -eq 'Paid' -or -not $SkipCompile -or -not (Test-Path -LiteralPath (
     & $compiler @compilerArgs @sourceFiles
     if ($LASTEXITCODE -ne 0) { throw 'Native compilation failed' }
 }
+Copy-Item -LiteralPath (Join-Path $projectRoot 'native\NZIP.exe.config') -Destination (Join-Path $outputRoot ($product+'.exe.config')) -Force
 $engineOutput = Join-Path $outputRoot '7zip'
 New-Item -ItemType Directory -Path $engineOutput -Force | Out-Null
 Get-ChildItem -LiteralPath (Join-Path $projectRoot 'vendor\7zip') -File | Copy-Item -Destination $engineOutput -Force
@@ -54,7 +55,7 @@ Copy-Item -LiteralPath (Join-Path $projectRoot 'LICENSE'),(Join-Path $projectRoo
 Copy-Item -LiteralPath (Join-Path $projectRoot 'native\USAGE.txt') -Destination $outputRoot -Force
 if ($Edition -eq 'Paid') { Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\commercial\COMMERCIAL-TERMS-DRAFT.txt'),(Join-Path $projectRoot 'LICENSES.md') -Destination $outputRoot -Force; Add-Content -LiteralPath (Join-Path $outputRoot 'USAGE.txt') -Encoding UTF8 -Value (Get-Content -LiteralPath (Join-Path $projectRoot 'native\USAGE-PAID.txt') -Raw -Encoding UTF8) }
 if ($Edition -eq 'Paid') {
-    $allowedFiles = @(($product+'.exe'),'LICENSE','LICENSES.md','THIRD_PARTY_NOTICES.md','USAGE.txt','COMMERCIAL-TERMS-DRAFT.txt') + @(Get-ChildItem -LiteralPath (Join-Path $projectRoot 'vendor\7zip') -File | ForEach-Object { '7zip\'+$_.Name })
+    $allowedFiles = @(($product+'.exe'),($product+'.exe.config'),'LICENSE','LICENSES.md','THIRD_PARTY_NOTICES.md','USAGE.txt','COMMERCIAL-TERMS-DRAFT.txt') + @(Get-ChildItem -LiteralPath (Join-Path $projectRoot 'vendor\7zip') -File | ForEach-Object { '7zip\'+$_.Name })
     foreach ($file in Get-ChildItem -LiteralPath $outputRoot -Recurse -File) {
         $relative = $file.FullName.Substring($outputRoot.Length+1)
         if ($relative -notin $allowedFiles) { throw ('Unexpected file in paid output; refusing to package: '+$relative) }

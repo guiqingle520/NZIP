@@ -5,6 +5,8 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
+using File=NZIP.ArchiveFile;
+using Directory=NZIP.ArchiveDirectory;
 using System.IO.Pipes;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -85,7 +87,7 @@ namespace NZIP {
             if(retrySecret!=null)await OpenArchive(path,retrySecret,page);
         }
         void ReleaseArchive(){if(archiveLease!=null){archiveLease.Dispose();archiveLease=null;}}
-        void AcquireArchive(){ReleaseArchive();if(archive!=null&&!preferences.Bool("allowExternalDelete")&&File.Exists(Json.Str(archive,"path")))archiveLease=new FileStream(Json.Str(archive,"path"),FileMode.Open,FileAccess.Read,FileShare.ReadWrite);}
+        void AcquireArchive(){ReleaseArchive();if(archive!=null&&!preferences.Bool("allowExternalDelete")&&File.Exists(Json.Str(archive,"path")))archiveLease=new FileStream(ArchivePath.Native(Json.Str(archive,"path")),FileMode.Open,FileAccess.Read,FileShare.ReadWrite);}
         void UpdateTitle(){Text=archive==null?Edition.Name:(preferences.Bool("fullTitle")?Json.Str(archive,"path"):Json.Str(archive,"name"))+" - "+Edition.Name;}
         void BuildTree(){changingTree=true;tree.BeginUpdate();tree.Nodes.Clear();nodes.Clear();var root=new TreeNode(Json.Str(archive,"name")){Tag="",ImageKey="archive",SelectedImageKey="archive"};tree.Nodes.Add(root);nodes[""]=root;
             foreach(var entry in entries){string path=Json.Str(entry,"path").TrimEnd('/');var parts=path.Split('/');int count=Json.Bool(entry,"isDirectory")?parts.Length:parts.Length-1;if(count>128)continue;string parent="";for(int i=0;i<count;i++){string current=parent+parts[i]+"/";if(!nodes.ContainsKey(current)){var node=new TreeNode(parts[i]){Tag=current,ImageKey="folder",SelectedImageKey="folder"};nodes[parent].Nodes.Add(node);nodes[current]=node;}parent=current;}}

@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using File=NZIP.ArchiveFile;
+using Directory=NZIP.ArchiveDirectory;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -70,7 +72,7 @@ namespace NZIP {
         }
         J ListRaw(string archive,string password,CancellationToken cancel,Action<int> progress=null,int codePage=0) {
             archive=Json.Absolute(archive);var data=ParseList(Run(new[]{"l","-slt","-p"+(password??"")}.Concat(CodePageOptions(codePage)).Concat(new[]{"--",archive}),null,cancel,progress),archive);
-            data["path"]=archive;data["name"]=Path.GetFileName(archive);data["archiveSize"]=new FileInfo(archive).Length;return data;
+            data["path"]=archive;data["name"]=Path.GetFileName(archive);data["archiveSize"]=new FileInfo(ArchivePath.Native(archive)).Length;return data;
         }
         sealed class ReadArchive:IDisposable {public string Path,OuterType;public J Data;public TempFolder Temp;public void Dispose(){if(Temp!=null)Temp.Dispose();}}
         ReadArchive OpenRead(string archive,string password,CancellationToken cancel,int codePage){
@@ -84,7 +86,7 @@ namespace NZIP {
                 opened.Path=files[0];try{opened.Data=ListRaw(opened.Path,password,cancel,null,codePage);}catch(ArchiveError error){if(error.Code=="UNSAFE_PATH")throw;throw new ArchiveError("此复合压缩包中没有可读取的 TAR 文件："+error.Message,error.Code);}opened.OuterType=Json.Str(outer,"type");if(!Json.Str(opened.Data,"type").Equals("tar",StringComparison.OrdinalIgnoreCase))throw new ArchiveError("此复合压缩包中没有有效的 TAR 文件");return opened;
             }catch{opened.Dispose();throw;}
         }
-        public J List(string archive,string password,CancellationToken cancel,Action<int> progress=null,int codePage=0){using(var opened=OpenRead(archive,password,cancel,codePage)){var data=opened.Data??ListRaw(opened.Path,password,cancel,progress,codePage);if(opened.Temp!=null){data["type"]="tar."+ArchiveFormats.Normalize(opened.OuterType);data["path"]=Json.Absolute(archive);data["name"]=Path.GetFileName(archive);data["archiveSize"]=new FileInfo(archive).Length;}return data;}}
+        public J List(string archive,string password,CancellationToken cancel,Action<int> progress=null,int codePage=0){using(var opened=OpenRead(archive,password,cancel,codePage)){var data=opened.Data??ListRaw(opened.Path,password,cancel,progress,codePage);if(opened.Temp!=null){data["type"]="tar."+ArchiveFormats.Normalize(opened.OuterType);data["path"]=Json.Absolute(archive);data["name"]=Path.GetFileName(archive);data["archiveSize"]=new FileInfo(ArchivePath.Native(archive)).Length;}return data;}}
         public J Test(string archive,string password,CancellationToken cancel,Action<int> progress=null,int codePage=0) {
             using(LicenseGate.Enter())return TestCore(archive,password,cancel,progress,codePage);
         }
@@ -126,7 +128,7 @@ namespace NZIP {
                 if(password!=""){args.Add("-p"+password);if(format=="zip")args.Add("-mem=AES256");if(format=="7z"&&Json.Bool(p,"encryptHeaders",true))args.Add("-mhe=on");}
                 if(volume!="")args.Add("-v"+volume);args.Add("--");args.Add(temp);if(compound)args.Add(inner);else args.AddRange(sources.Select(s=>s.Substring(cwd.TrimEnd('\\').Length+1)));
                 Run(args,cwd,cancel,compound?(Action<int>)(n=>{if(progress!=null)progress(50+n/2);}):progress);cancel.ThrowIfCancellationRequested();var outputs=Directory.GetFiles(staging.Path).OrderBy(s=>s).ToArray();if(outputs.Length==0)throw new ArchiveError("未生成压缩文件");var committed=new List<string>();
-                try{foreach(var source in outputs){cancel.ThrowIfCancellationRequested();var target=Path.Combine(parent,Path.GetFileName(source));if(CreateHardLink(target,source,IntPtr.Zero)){committed.Add(target);continue;}if(File.Exists(target)||Directory.Exists(target))throw new ArchiveError("同名压缩包或分卷已存在，请更换名称");using(var output=new FileStream(target,FileMode.CreateNew,FileAccess.Write,FileShare.None)){committed.Add(target);using(var input=File.OpenRead(source)){var buffer=new byte[65536];int n;while((n=input.Read(buffer,0,buffer.Length))>0){cancel.ThrowIfCancellationRequested();output.Write(buffer,0,n);}}output.Flush(true);}}}
+                try{foreach(var source in outputs){cancel.ThrowIfCancellationRequested();var target=Path.Combine(parent,Path.GetFileName(source));if(CreateHardLink(target,source,IntPtr.Zero)){committed.Add(target);continue;}if(File.Exists(target)||Directory.Exists(target))throw new ArchiveError("同名压缩包或分卷已存在，请更换名称");using(var output=new FileStream(ArchivePath.Native(target),FileMode.CreateNew,FileAccess.Write,FileShare.None)){committed.Add(target);using(var input=File.OpenRead(source)){var buffer=new byte[65536];int n;while((n=input.Read(buffer,0,buffer.Length))>0){cancel.ThrowIfCancellationRequested();output.Write(buffer,0,n);}}output.Flush(true);}}}
                 catch{foreach(var f in committed)File.Delete(f);throw;}
                 return Json.Obj("path",committed[0],"outputs",committed,"message",committed.Count>1?"压缩完成，共 "+committed.Count+" 个分卷":"压缩完成");
             }
@@ -142,7 +144,7 @@ namespace NZIP {
             if(!AllowLongPaths&&outputEntries.Any(e=>Path.Combine(destination,Json.Str(e,"path")).Length>259))throw new ArchiveError("目标包含长路径，请在设置中启用长路径处理");
             if(Json.Bool(p,"checkSpace",true)){var drive=new DriveInfo(Path.GetPathRoot(destination));if(drive.IsReady&&outputEntries.Sum(e=>Json.Num(e,"size"))>drive.AvailableFreeSpace)throw new ArchiveError("磁盘空间不足，未开始解压");}
             using(var staging=new TempFolder(Path.GetDirectoryName(destination),".nzip-extract-")) {
-                if(Json.Bool(p,"preallocate"))foreach(var entry in outputEntries.Where(e=>!Json.Bool(e,"isDirectory"))){cancel.ThrowIfCancellationRequested();var path=Path.GetFullPath(Path.Combine(staging.Path,Json.Str(entry,"path")));if(!Json.Within(staging.Path,path))throw new ArchiveError("输出路径无效","UNSAFE_PATH");Directory.CreateDirectory(Path.GetDirectoryName(path));using(var output=new FileStream(path,FileMode.CreateNew,FileAccess.Write,FileShare.None))output.SetLength(Json.Num(entry,"size"));}
+                if(Json.Bool(p,"preallocate"))foreach(var entry in outputEntries.Where(e=>!Json.Bool(e,"isDirectory"))){cancel.ThrowIfCancellationRequested();var path=Path.GetFullPath(Path.Combine(staging.Path,Json.Str(entry,"path")));if(!Json.Within(staging.Path,path))throw new ArchiveError("输出路径无效","UNSAFE_PATH");Directory.CreateDirectory(Path.GetDirectoryName(path));using(var output=new FileStream(ArchivePath.Native(path),FileMode.CreateNew,FileAccess.Write,FileShare.None))output.SetLength(Json.Num(entry,"size"));}
                 var args=new List<string>{"x","-y","-spd","-p"+password,"-o"+staging.Path};args.AddRange(CodePageOptions(codePage));args.AddRange(new[]{"--",opened.Path});args.AddRange(selected);Run(args,null,cancel,progress);VerifyTree(staging.Path,cancel);cancel.ThrowIfCancellationRequested();
                 if(Directory.Exists(destination)||File.Exists(destination))throw new ArchiveError("目标文件夹已存在，请更换路径","DEST_EXISTS");Directory.Move(staging.Path,destination);return Json.Obj("path",destination,"message","解压完成");
             }
@@ -167,7 +169,7 @@ namespace NZIP {
                 renamedPaths=paths.Select(s=>s.TrimEnd('/')==oldName||s.StartsWith(oldName+"/",StringComparison.Ordinal)?newPath+s.Substring(oldName.Length):s).ToArray();
                 if(renamedPaths.Select(s=>s.TrimEnd('/')).Distinct(StringComparer.OrdinalIgnoreCase).Count()!=renamedPaths.Length)throw new ArchiveError("新名称与已有文件冲突");
             }
-            var before=new FileInfo(archive);long length=before.Length;var modified=before.LastWriteTimeUtc;
+            var before=new FileInfo(ArchivePath.Native(archive));long length=before.Length;var modified=before.LastWriteTimeUtc;
             using(var staging=new TempFolder(Path.GetDirectoryName(archive),".nzip-edit-")) {
                 var temp=Path.Combine(staging.Path,Path.GetFileName(archive));File.Copy(archive,temp);
                 if(action=="delete")Run(new[]{"d","-y","-spd","--",temp}.Concat(selected),null,cancel,progress);
@@ -181,7 +183,7 @@ namespace NZIP {
                     var cwd=Path.Combine(staging.Path,"input");Directory.CreateDirectory(Path.Combine(cwd,folder));foreach(var s in sources)CopyTree(s,Path.Combine(cwd,folder,Path.GetFileName(s)),cancel);
                     Run(new[]{"a","-y","-snl","--",temp}.Concat(sources.Select(s=>folder+Path.GetFileName(s))),cwd,cancel,progress);
                 }
-                Test(temp,password,cancel);cancel.ThrowIfCancellationRequested();var after=new FileInfo(archive);if(after.Length!=length||after.LastWriteTimeUtc!=modified)throw new ArchiveError("压缩包已被其他程序修改，请重新打开后重试");File.Replace(temp,archive,null);return Json.Obj("path",archive,"message",action=="delete"?"所选文件已从压缩包中删除":action=="rename"?"重命名完成":"文件已添加到压缩包");
+                Test(temp,password,cancel);cancel.ThrowIfCancellationRequested();var after=new FileInfo(ArchivePath.Native(archive));if(after.Length!=length||after.LastWriteTimeUtc!=modified)throw new ArchiveError("压缩包已被其他程序修改，请重新打开后重试");File.Replace(temp,archive,null);return Json.Obj("path",archive,"message",action=="delete"?"所选文件已从压缩包中删除":action=="rename"?"重命名完成":"文件已添加到压缩包");
             }
         }
     }

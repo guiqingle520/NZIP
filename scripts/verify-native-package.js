@@ -28,6 +28,9 @@ async function main() {
   const original = path.resolve('dist', folder), extracted = path.join(root, folder);
   const names = await files(original); assert.deepEqual(await files(extracted), names);
   for (const name of names) assert.deepEqual(await fs.readFile(path.join(extracted, name)), await fs.readFile(path.join(original, name)), name);
+  const runtimeConfig = await fs.readFile(path.join(extracted, 'NZIP.exe.config'), 'utf8');
+  assert.ok(runtimeConfig.includes('sku=".NETFramework,Version=v4.8"'));
+  assert.ok(runtimeConfig.includes('Switch.System.IO.UseLegacyPathHandling=false;Switch.System.IO.BlockLongPaths=false'));
   if (process.argv.includes('--files-only')) {
     console.log(`Release ZIP file verification passed: all ${names.length} files match. Runtime round trip explicitly skipped (--files-only).`);
     console.log(`Extracted release: ${extracted}`); return;

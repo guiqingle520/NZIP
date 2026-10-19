@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using File=NZIP.ArchiveFile;
+using Directory=NZIP.ArchiveDirectory;
 using System.Linq;
 using System.Text;
 using System.Threading;
@@ -55,7 +57,7 @@ namespace NZIP {
             switch(action){
                 case "init":lock(gate)return Json.Obj("ok",true,"settings",settings,"recent",recent,"jobs",jobs,"version",typeof(Backend).Assembly.GetName().Version.ToString(3),"downloads",Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),"Downloads"),"canIntegrate",true,"runtime","winforms");
                 case "list":var data=Engine.List(str(0),str(1),token,null,Convert.ToInt32(arg(2)));Remember(data);return Json.Obj("ok",true,"data",data);
-                case "describe":return Json.Obj("ok",true,"files",Json.Array(arg(0)).Select(v=>{var p=Json.Absolute(Convert.ToString(v));bool dir=Directory.Exists(p);if(!dir&&!File.Exists(p))throw new FileNotFoundException("文件不存在",p);return Json.Obj("path",p,"name",Path.GetFileName(p),"size",dir?0:new FileInfo(p).Length,"isDirectory",dir);}).ToArray());
+                case "describe":return Json.Obj("ok",true,"files",Json.Array(arg(0)).Select(v=>{var p=Json.Absolute(Convert.ToString(v));bool dir=Directory.Exists(p);if(!dir&&!File.Exists(p))throw new FileNotFoundException("文件不存在",p);return Json.Obj("path",p,"name",Path.GetFileName(p),"size",dir?0:new FileInfo(ArchivePath.Native(p)).Length,"isDirectory",dir);}).ToArray());
                 case "start-job":return Enqueue(str(0),Json.Map(arg(1)));
                 case "extract-folder":var archive=Json.Absolute(str(0));var name=ArchiveFormats.Stem(archive);if(String.IsNullOrWhiteSpace(name)||name=="."||name=="..")name="解压结果";var destination=Path.Combine(Path.GetDirectoryName(archive),name);int suffix=2;while(Directory.Exists(destination)||File.Exists(destination))destination=Path.Combine(Path.GetDirectoryName(archive),name+" ("+(suffix++)+")");return Enqueue("extract",Json.Obj("archive",archive,"password",str(1),"codePage",Convert.ToInt32(arg(2)),"destination",destination));
                 case "cancel-job":lock(gate){var id=str(0);if(active!=null&&active.Id==id){active.Cancel.Cancel();active.Job["status"]="cancelling";}else{var pending=queue.Where(w=>w.Id!=id).ToArray();var removed=queue.Where(w=>w.Id==id).ToArray();queue.Clear();foreach(var w in pending)queue.Enqueue(w);foreach(var w in removed){w.Job["status"]="cancelled";w.Job["finishedAt"]=Json.Now;w.Cancel.Dispose();if(w.Completion!=null)w.Completion.TrySetCanceled();}}}Jobs();return Json.Obj("ok",true);

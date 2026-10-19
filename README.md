@@ -1,12 +1,14 @@
 # NZIP 收费版开发分支
 
-当前 `paid-version` 分支开发原生收费版 0.7.1，首版支持签名设备授权、首次联网激活、永久离线使用、3 个当前登记设备名额、自助解绑换机和购买邮箱设备管理。具体交付与验证见 [收费版说明](docs/commercial/implementation-v0.7.0.md)，部署见 [授权服务](server/README.md)。正式域名、邮件服务和正式密钥尚需发行方配置，当前安装包为测试构建。
+当前 `paid-version` 分支开发原生收费版 0.7.2，首版支持签名设备授权、首次联网激活、永久离线使用、3 个当前登记设备名额、自助解绑换机和购买邮箱设备管理。具体交付与验证见 [收费版说明](docs/commercial/implementation-v0.7.0.md)，部署见 [授权服务](server/README.md)。正式域名、邮件服务和正式密钥尚需发行方配置，当前安装包为测试构建。
+
+0.6.3 / 0.7.2 修复深层目录解压时的长路径错误：文件操作显式使用 Windows 扩展路径，并补齐 .NET 4.8 启动配置，无需修改系统全局长路径策略。双击深层文件时，将独立副本放到较短的临时路径交给本地程序。免费安装包为 `dist/NZIP-0.6.3-Setup-x64.msi`，收费测试安装包为 `dist/NZIPPaidPreview-0.7.2-Setup-x64.msi`；见 [验证记录](docs/commercial/validation-v0.7.2.md)。
 
 0.7.1 修复目录切换、搜索和关闭压缩包时虚拟列表数据与 Windows 行号不同步造成的索引越界。安装包为 `dist/NZIPPaidPreview-0.7.1-Setup-x64.msi`；编译和打包核验通过，新增界面回归被本机应用控制拦截，尚未运行完成，详见 [修复验证记录](docs/commercial/validation-v0.7.1.md)。
 
 既有代码继续适用原 MIT 许可，新增商业授权实现的范围见 [LICENSES.md](LICENSES.md)。
 
-## 原免费版 0.6.2
+## 免费版 0.6.3
 
 无广告、无需登录的 Windows 本地压缩解压工具。主界面已改为 **C# / .NET Framework 4.8 原生 Windows Forms**，无需 WebView2，不包含 Electron、Node.js 或浏览器内核。
 
@@ -18,11 +20,11 @@
 
 ## 安装与运行
 
-安装包：dist/NZIP-0.6.2-Setup-x64.msi。检测当前用户旧版并默认沿用原安装目录；首次默认安装到 LocalAppData\Programs\NZIP。可选打开方式、传统右键菜单和快捷方式。
+安装包：dist/NZIP-0.6.3-Setup-x64.msi。检测当前用户旧版并默认沿用原安装目录；首次默认安装到 LocalAppData\Programs\NZIP。可选打开方式、传统右键菜单和快捷方式。
 
 保留 0.4.1 的安装维护提权声明和日志记录。数据盘安装维护请从管理员终端启动 MSI，日常使用不需要提权。安装仍属于当前用户，不更改系统安全策略或共享 Config.Msi 权限。未签名 EXE 安装入口被本机应用控制阻止，交付使用系统 MSI 服务。
 
-便携版：完整解压 dist/NZIP-0.6.2-win-x64.zip，运行 NZIP.exe，保留 7zip 目录及许可文件。要求 Windows 10/11 x64、.NET Framework 4.8，无需 WebView2。
+便携版：完整解压 dist/NZIP-0.6.3-win-x64.zip，运行 NZIP.exe，保留 NZIP.exe.config、7zip 目录及许可文件。要求 Windows 10/11 x64、.NET Framework 4.8，无需 WebView2。
 
 ## 截图中的操作
 

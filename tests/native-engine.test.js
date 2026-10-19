@@ -170,6 +170,35 @@ test('native cancellation and damaged archive cleanup', async () => {
   await assert.rejects(() => rpc('extract', { archive, destination: path.join(root, 'broken-out') }));
   assert.ok(!(await fs.readdir(root)).some(n => n.startsWith('.nzip-')));
 });
+for (const format of ['zip', '7z', 'tar.xz']) test(`native ${format}: long Unicode paths round trip with preallocation on and off`, async () => {
+  const source = path.join(root, `long-source-${format}`);
+  const relative = path.join(...Array.from({ length: 10 }, (_, i) => `第${i}层-abcdefghijklmnopqrstuv`), 'TableCleanupJob.java');
+  assert.ok(relative.length > 260);
+  const input = path.join(source, relative), contents = 'NZIP long path regression 中文\r\n'.repeat(40);
+  await fs.mkdir(path.dirname(input), { recursive: true }); await fs.writeFile(input, contents);
+  const archive = path.join(root, `long-path.${format}`); await rpc('create', { sources: [source], destination: archive, format });
+  const listed = await rpc('list', { archive }), selected = path.basename(source) + '/' + relative.replaceAll('\\', '/');
+  assert.ok(listed.entries.some(e => e.path === selected)); await rpc('test', { archive });
+  for (const preallocate of [false, true]) {
+    const destination = path.join(root, `long-out-${format}-${preallocate}`);
+    await rpc('extract', { archive, destination, selected: [selected], preallocate });
+    assert.equal(await fs.readFile(path.join(destination, selected), 'utf8'), contents);
+  }
+});
+test('native long destination and archive paths preserve rollback on CRC failure', async () => {
+  const parent = path.join(root, ...Array.from({ length: 9 }, (_, i) => `目标目录${i}-abcdefghijklmnopqrstu`));
+  assert.ok(parent.length > 260); await fs.mkdir(parent, { recursive: true });
+  const archive = path.join(parent, 'archive.zip'), relative = Array.from({ length: 10 }, (_, i) => `source-${i}-abcdefghijklmnopqrstu`).join('/') + '/hello.txt';
+  const valid = zipFile(relative, 'long destination payload'); await fs.writeFile(archive, valid);
+  const destination = path.join(parent, 'extracted'); await rpc('extract', { archive, destination, preallocate: true });
+  assert.equal(await fs.readFile(path.join(destination, relative), 'utf8'), 'long destination payload');
+  const broken = Buffer.from(valid), badCrc = (broken.readUInt32LE(14) ^ 1) >>> 0;
+  broken.writeUInt32LE(badCrc, 14); broken.writeUInt32LE(badCrc, broken.indexOf(Buffer.from('504b0102', 'hex')) + 16);
+  const corrupt = path.join(parent, 'corrupt.zip'), failed = path.join(parent, 'failed'); await fs.writeFile(corrupt, broken);
+  await assert.rejects(() => rpc('extract', { archive: corrupt, destination: failed, preallocate: true }));
+  await assert.rejects(() => fs.stat(failed), { code: 'ENOENT' });
+  assert.ok(!(await fs.readdir(parent)).some(name => name.startsWith('.nzip-extract-')));
+});
 test('native rejects unsafe archive and output inside source', async () => {
   const archive = path.join(root, 'unsafe.zip'); await fs.writeFile(archive, zipFile('../escaped.txt', 'unsafe'));
   await assert.rejects(() => rpc('extract', { archive, destination: path.join(root, 'unsafe-out') }), e => e.code === 'UNSAFE_PATH');

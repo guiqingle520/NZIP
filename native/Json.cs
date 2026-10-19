@@ -5,6 +5,8 @@ using System.Globalization;
 using System.Linq;
 using System.Web.Script.Serialization;
 using System.IO;
+using File=NZIP.ArchiveFile;
+using Directory=NZIP.ArchiveDirectory;
 
 namespace NZIP {
     using J = Dictionary<string,object>;

@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using File=NZIP.ArchiveFile;
+using Directory=NZIP.ArchiveDirectory;
 using System.IO.Compression;
 using System.Linq;
 using System.Text;
@@ -28,11 +30,11 @@ namespace NZIP {
             var archive=Json.Absolute(Json.Str(p,"archive"));if(!Path.GetExtension(archive).Equals(".zip",StringComparison.OrdinalIgnoreCase))throw new ArchiveError("注释编辑目前支持 ZIP");
             var bytes=Encoding.UTF8.GetBytes(Json.Str(p,"comment"));if(bytes.Length>65535)throw new ArchiveError("ZIP 注释最多 65535 字节");
             using(var stage=new TempFolder(Path.GetDirectoryName(archive),".nzip-comment-")){
-                var temp=Path.Combine(stage.Path,"comment.zip");var before=new FileInfo(archive);long length=before.Length;var modified=before.LastWriteTimeUtc;
+                var temp=Path.Combine(stage.Path,"comment.zip");var before=new FileInfo(ArchivePath.Native(archive));long length=before.Length;var modified=before.LastWriteTimeUtc;
                 using(var input=File.OpenRead(archive))using(var output=File.Create(temp)){
                     long end=EndRecord(input);input.Position=0;Copy(input,output,end+20,token);using(var writer=new BinaryWriter(output,Encoding.UTF8,true)){writer.Write((ushort)bytes.Length);writer.Write(bytes);}
                 }
-                engine.Test(temp,Json.Str(p,"password"),token,null,(int)Json.Num(p,"codePage"));token.ThrowIfCancellationRequested();var now=new FileInfo(archive);if(now.Length!=length||now.LastWriteTimeUtc!=modified)throw new ArchiveError("压缩包已改变，请重新打开");File.Replace(temp,archive,null);
+                engine.Test(temp,Json.Str(p,"password"),token,null,(int)Json.Num(p,"codePage"));token.ThrowIfCancellationRequested();var now=new FileInfo(ArchivePath.Native(archive));if(now.Length!=length||now.LastWriteTimeUtc!=modified)throw new ArchiveError("压缩包已改变，请重新打开");File.Replace(temp,archive,null);
                 return Json.Obj("path",archive,"message","ZIP 注释已保存（UTF-8）");
             }
         }
@@ -69,7 +71,7 @@ namespace NZIP {
         }
         static J RepairCore(ArchiveEngine engine,J p,CancellationToken token,Action<int> progress){
             string archive=Json.Absolute(Json.Str(p,"archive")),destination=Json.Absolute(Json.Str(p,"destination"));if(String.Equals(archive,destination,StringComparison.OrdinalIgnoreCase)||File.Exists(destination)||Directory.Exists(destination))throw new ArchiveError("修复结果必须保存到新的 ZIP 文件，原文件保留");
-            if(new FileInfo(archive).Length>2L*1024*1024*1024)throw new ArchiveError("当前修复器支持 2 GB 以内的普通 ZIP");
+            if(new FileInfo(ArchivePath.Native(archive)).Length>2L*1024*1024*1024)throw new ArchiveError("当前修复器支持 2 GB 以内的普通 ZIP");
             int recovered=0,skipped=0;long expanded=0;var seen=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             using(var stage=new TempFolder(Path.GetDirectoryName(destination),".nzip-repair-")){
                 var output=Path.Combine(stage.Path,"recovered.zip");using(var input=File.OpenRead(archive))using(var reader=new BinaryReader(input))using(var zip=new ZipArchive(File.Create(output),ZipArchiveMode.Create)){
@@ -110,7 +112,7 @@ namespace NZIP {
             try{var listed=engine.List(archive,"",token);if(!Json.Bool(listed,"encrypted"))throw new ArchiveError("压缩包未加密，无需恢复密码","NOT_ENCRYPTED");}catch(ArchiveError error){if(error.Code!="PASSWORD_REQUIRED")throw;}
             var candidates=Json.Strings(p,"candidates");var dictionary=Json.Str(p,"dictionary");string chars=Json.Str(p,"characters","0123456789");int min=(int)Json.Num(p,"minLength",1),max=(int)Json.Num(p,"maxLength",4);
             IEnumerable<string> guesses;long count;
-            if(dictionary!=""){if(new FileInfo(dictionary).Length>10*1024*1024)throw new ArchiveError("字典上限 10 MB");candidates=File.ReadAllLines(dictionary,Encoding.UTF8).Where(s=>s.Length>0).Distinct().ToArray();if(candidates.Length==0)throw new ArchiveError("字典中没有候选密码");}
+            if(dictionary!=""){if(new FileInfo(ArchivePath.Native(dictionary)).Length>10*1024*1024)throw new ArchiveError("字典上限 10 MB");candidates=File.ReadAllLines(dictionary,Encoding.UTF8).Where(s=>s.Length>0).Distinct().ToArray();if(candidates.Length==0)throw new ArchiveError("字典中没有候选密码");}
             if(candidates.Any(s=>s.Length>1024))throw new ArchiveError("单个候选密码最多 1,024 个字符");
             if(candidates.Length>0){if(candidates.Length>1000000)throw new ArchiveError("最多尝试 1,000,000 个候选密码");guesses=candidates;count=candidates.Length;}
             else{chars=new string(chars.Distinct().ToArray());if(chars.Length==0||chars.Length>128||min<1||max<min||max>12)throw new ArchiveError("字符集或长度范围无效");count=0;for(int length=min;length<=max;length++){double n=Math.Pow(chars.Length,length);if(n>1000000||count+n>1000000)throw new ArchiveError("组合超过 1,000,000 次，请缩小范围或使用字典");count+=(long)n;}guesses=Generate(chars,min,max);}
