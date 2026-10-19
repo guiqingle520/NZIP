@@ -4,7 +4,7 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 $package = Get-Content -LiteralPath (Join-Path $projectRoot 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 $version = $package.version
 $product = 'NZIP'
-if ($Edition -eq 'Paid') { $version='0.7.2'; $product=if ($Preview) { 'NZIPPaidPreview' } else { 'NZIPPaid' } }
+if ($Edition -eq 'Paid') { $version='0.7.3'; $product=if ($Preview) { 'NZIPPaidPreview' } else { 'NZIPPaid' } }
 $appExe = Join-Path $projectRoot ('dist\' + $product + '-' + $version + '-win-x64\' + $product + '.exe')
 $needsCompile = -not (Test-Path -LiteralPath $appExe)
 if (-not $needsCompile) {

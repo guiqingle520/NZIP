@@ -199,6 +199,13 @@ test('native long destination and archive paths preserve rollback on CRC failure
   await assert.rejects(() => fs.stat(failed), { code: 'ENOENT' });
   assert.ok(!(await fs.readdir(parent)).some(name => name.startsWith('.nzip-extract-')));
 });
+test('native writeback supports implicit parent directories without adding sibling files', async () => {
+  const entry = 'implicit/subfolder/File.java', archive = path.join(root, 'implicit-edit.zip'), edited = path.join(root, 'implicit-edited.java');
+  await fs.writeFile(archive, zipFile(entry, 'original')); await fs.writeFile(edited, 'edited');
+  await rpc('writeback', { archive, entry, source: edited, originalHash: crypto.createHash('sha256').update('original').digest('hex') });
+  const listed = await rpc('list', { archive }); assert.deepEqual(listed.entries.filter(e => !e.isDirectory).map(e => e.path), [entry]);
+  const out = path.join(root, 'implicit-edited-out'); await rpc('extract', { archive, destination: out }); assert.equal(await fs.readFile(path.join(out, entry), 'utf8'), 'edited');
+});
 test('native rejects unsafe archive and output inside source', async () => {
   const archive = path.join(root, 'unsafe.zip'); await fs.writeFile(archive, zipFile('../escaped.txt', 'unsafe'));
   await assert.rejects(() => rpc('extract', { archive, destination: path.join(root, 'unsafe-out') }), e => e.code === 'UNSAFE_PATH');

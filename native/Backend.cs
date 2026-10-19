@@ -32,9 +32,10 @@ namespace NZIP {
         public bool Busy{get{lock(gate)return active!=null||queue.Count>0;}}
         public void CancelAll(){lock(gate){foreach(var w in queue){w.Cancel.Cancel();w.Job["status"]="cancelled";w.Job["finishedAt"]=Json.Now;w.Cancel.Dispose();if(w.Completion!=null)w.Completion.TrySetCanceled();}queue.Clear();if(active!=null)active.Cancel.Cancel();}Jobs();}
         public Task<J> ExtractForOpen(J payload){var completion=new TaskCompletionSource<J>(TaskCreationOptions.RunContinuationsAsynchronously);payload["openAfterExtract"]=false;Enqueue("extract",payload,completion);return completion.Task;}
+        public Task<J> WriteBackForOpen(J payload){var completion=new TaskCompletionSource<J>(TaskCreationOptions.RunContinuationsAsynchronously);Enqueue("writeback",payload,completion);return completion.Task;}
         J Enqueue(string kind,J payload,TaskCompletionSource<J> completion=null){
             var capability=LicenseGate.Capture();
-            if(!new[]{"create","extract","test","modify","scan","comment","repair","recover"}.Contains(kind))throw new ArchiveError("无效操作");
+            if(!new[]{"create","extract","test","modify","scan","comment","repair","recover","writeback"}.Contains(kind))throw new ArchiveError("无效操作");
             var work=new Work{Id=Guid.NewGuid().ToString(),Kind=kind,Payload=payload,Completion=completion,Capability=capability};work.Job=Json.Obj("id",work.Id,"type",kind,"label",Path.GetFileName(Json.Str(payload,kind=="create"?"destination":"archive")),"status","queued","percent",0,"createdAt",Json.Now);
             bool start;lock(gate){jobs.Insert(0,work.Job);if(jobs.Count>100)jobs.RemoveAt(jobs.Count-1);queue.Enqueue(work);start=!worker;worker=true;}Jobs();if(start)Task.Run((Action)Drain);return Json.Obj("ok",true,"id",work.Id);
         }
@@ -43,7 +44,7 @@ namespace NZIP {
                 Action<int> progress=n=>{lock(gate)w.Job["percent"]=n;Jobs();};J result=null;Exception failure=null;
                 try{using(LicenseGate.Admitted(w.Capability)){
                     var token=w.Cancel.Token;
-                    if(w.Kind=="create")result=Engine.Create(w.Payload,token,progress);else if(w.Kind=="extract")result=Engine.Extract(w.Payload,token,progress);else if(w.Kind=="modify")result=Engine.Modify(w.Payload,token,progress);else if(w.Kind=="scan")result=ArchiveScanner.Scan(Engine,w.Payload,token,progress);else if(w.Kind=="comment")result=ArchiveTools.WriteComment(Engine,w.Payload,token);else if(w.Kind=="repair")result=ArchiveTools.Repair(Engine,w.Payload,token,progress);else if(w.Kind=="recover")result=ArchiveTools.RecoverPassword(Engine,w.Payload,token,progress);else result=Engine.Test(Json.Str(w.Payload,"archive"),Json.Str(w.Payload,"password"),token,progress,(int)Json.Num(w.Payload,"codePage"));
+                    if(w.Kind=="create")result=Engine.Create(w.Payload,token,progress);else if(w.Kind=="extract")result=Engine.Extract(w.Payload,token,progress);else if(w.Kind=="modify")result=Engine.Modify(w.Payload,token,progress);else if(w.Kind=="scan")result=ArchiveScanner.Scan(Engine,w.Payload,token,progress);else if(w.Kind=="writeback")result=ArchiveEdits.WriteBack(Engine,w.Payload,token,progress);else if(w.Kind=="comment")result=ArchiveTools.WriteComment(Engine,w.Payload,token);else if(w.Kind=="repair")result=ArchiveTools.Repair(Engine,w.Payload,token,progress);else if(w.Kind=="recover")result=ArchiveTools.RecoverPassword(Engine,w.Payload,token,progress);else result=Engine.Test(Json.Str(w.Payload,"archive"),Json.Str(w.Payload,"password"),token,progress,(int)Json.Num(w.Payload,"codePage"));
                     if(w.Kind=="create"){try{Remember(Engine.List(Json.Str(result,"path"),Json.Str(w.Payload,"password"),CancellationToken.None));}catch(Exception){}}
                     if(w.Kind=="extract"){bool open;lock(gate)open=Json.Bool(w.Payload,"openAfterExtract",Json.Bool(settings,"openAfterExtract"));if(open){try{Reveal(Json.Str(result,"path"),true);}catch(Exception){}}}
                     lock(gate){w.Job["status"]="completed";w.Job["percent"]=100;w.Job["result"]=result;}

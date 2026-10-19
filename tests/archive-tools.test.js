@@ -3,7 +3,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
-const { spawn } = require('node:child_process');
+const { createHash } = require('node:crypto');
+const { spawn, spawnSync } = require('node:child_process');
 const executable = path.resolve(process.env.NZIP_NATIVE_EXE || `dist/NZIP-${require('../package.json').version}-win-x64/NZIP.exe`);
 function rpc(operation, payload, cancel = false) {
   return new Promise((resolve, reject) => {
@@ -16,6 +17,74 @@ function rpc(operation, payload, cancel = false) {
 let root, sources;
 before(async () => { root = await fs.mkdtemp(path.join(os.tmpdir(), 'nzip-tools-')); sources = [path.join(root, '你好.txt'), path.join(root, 'other.txt')]; await fs.writeFile(sources[0], '你好'.repeat(200)); await fs.writeFile(sources[1], 'intact other file'); });
 after(async () => fs.rm(root, { recursive: true, force: true }));
+const digest = bytes => createHash('sha256').update(bytes).digest('hex');
+for (const suffix of ['zip', 'zipx']) test(`${suffix} edited file writeback preserves siblings, comment and original entry path`, async () => {
+  const input = path.join(root, `edit-${suffix}`), target = path.join(input, '子目录', '你好.txt');
+  await fs.mkdir(path.dirname(target), { recursive: true }); await fs.writeFile(target, '原文'.repeat(100)); await fs.writeFile(path.join(input, 'other.txt'), 'untouched sibling');
+  const archive = path.join(root, `edit.${suffix}`); await rpc('create', { sources: [input], destination: archive, format: 'zip' });
+  const entry = path.basename(input) + '/子目录/你好.txt'; await rpc('comment', { archive: suffix === 'zip' ? archive : await copyZipAlias(archive), comment: '保留 ZIP 注释' });
+  // ZIPX uses the same ZIP container; keep the commented alias for that test.
+  if (suffix === 'zipx') await fs.copyFile(archive + '.zip', archive);
+  const edited = path.join(root, `edited-${suffix}.txt`), original = await fs.readFile(target), stat = await fs.stat(target);
+  await fs.writeFile(edited, '新文'.repeat(100)); await fs.utimes(edited, stat.atime, stat.mtime);
+  await rpc('writeback', { archive, entry, source: edited, originalHash: digest(original) });
+  const output = path.join(root, `writeback-${suffix}`); await rpc('extract', { archive, destination: output });
+  assert.equal(await fs.readFile(path.join(output, entry), 'utf8'), '新文'.repeat(100));
+  assert.equal(await fs.readFile(path.join(output, path.basename(input), 'other.txt'), 'utf8'), 'untouched sibling');
+  assert.equal((await rpc('read-comment', { archive })).comment, '保留 ZIP 注释');
+  assert.equal(await fs.readFile(edited, 'utf8'), '新文'.repeat(100));
+});
+async function copyZipAlias(archive) { const alias = archive + '.zip'; await fs.copyFile(archive, alias); return alias; }
+test('edited file conflict, invalid input and cancellation leave archive and edited copy unchanged', async () => {
+  const archive = path.join(root, 'conflict.zip'), edited = path.join(root, 'changed.txt'); await rpc('create', { sources, destination: archive });
+  const originalHash = digest(await fs.readFile(sources[0])); await fs.writeFile(edited, 'first edit');
+  const payload = { archive, entry: path.basename(sources[0]), source: edited, originalHash };
+  await rpc('writeback', payload); const before = await fs.readFile(archive); await fs.writeFile(edited, 'second stale edit');
+  await assert.rejects(() => rpc('writeback', payload), e => e.code === 'EDIT_CONFLICT');
+  await assert.rejects(() => rpc('writeback', { ...payload, entry: '../escaped.txt' }), e => e.code === 'UNSAFE_PATH');
+  await assert.rejects(() => rpc('writeback', { ...payload, originalHash: 'invalid' }));
+  await assert.rejects(() => rpc('writeback', payload, true), e => e.code === 'CANCELLED');
+  assert.deepEqual(await fs.readFile(archive), before); assert.equal(await fs.readFile(edited, 'utf8'), 'second stale edit');
+  assert.ok(!(await fs.readdir(root)).some(name => name.startsWith('.nzip-writeback-')));
+});
+test('independent editor sessions merge different entries without losing earlier edits', async () => {
+  const archive = path.join(root, 'merge-edits.zip'); await rpc('create', { sources, destination: archive });
+  for (let i = 0; i < sources.length; i++) {
+    const edited = path.join(root, `session-${i}.txt`); await fs.writeFile(edited, `edited session ${i}`);
+    await rpc('writeback', { archive, entry: path.basename(sources[i]), source: edited, originalHash: digest(await fs.readFile(sources[i])) });
+  }
+  const out = path.join(root, 'merge-edits-out'); await rpc('extract', { archive, destination: out });
+  for (let i = 0; i < sources.length; i++) assert.equal(await fs.readFile(path.join(out, path.basename(sources[i])), 'utf8'), `edited session ${i}`);
+});
+test('encrypted ZIP writeback keeps target and sibling encryption', async () => {
+  const archive = path.join(root, 'encrypted-edit.zip'), password = 'edit-password'; await rpc('create', { sources, destination: archive, password });
+  const edited = path.join(root, 'encrypted-edit.txt'); await fs.writeFile(edited, 'encrypted changed text');
+  await rpc('writeback', { archive, entry: path.basename(sources[0]), source: edited, originalHash: digest(await fs.readFile(sources[0])), password });
+  assert.ok((await rpc('list', { archive, password })).entries.every(e => e.encrypted));
+  const out = path.join(root, 'encrypted-edited-out'); await rpc('extract', { archive, password, destination: out });
+  assert.equal(await fs.readFile(path.join(out, path.basename(sources[0])), 'utf8'), 'encrypted changed text');
+  assert.deepEqual(await fs.readFile(path.join(out, path.basename(sources[1]))), await fs.readFile(sources[1]));
+});
+test('LZMA-compressed ZIPX writeback preserves an advanced-compression sibling', async () => {
+  const archive = path.join(root, 'advanced.zipx'), directory = path.join(root, 'advanced-input'); await fs.mkdir(directory);
+  const advancedSources = [path.join(directory, 'target.txt'), path.join(directory, 'sibling.txt')];
+  await fs.writeFile(advancedSources[0], 'advanced target 中文 '.repeat(5000)); await fs.writeFile(advancedSources[1], 'advanced unchanged sibling '.repeat(5000));
+  const created = spawnSync(process.env.NZIP_7Z_PATH || path.resolve('vendor/7zip/7z.exe'), ['a', '-tzip', '-mm=LZMA', archive, ...advancedSources], { windowsHide: true, encoding: 'utf8' });
+  assert.ifError(created.error); assert.equal(created.status, 0, created.stderr);
+  assert.ok((await rpc('list', { archive })).entries.every(e => e.method.includes('LZMA')));
+  const edited = path.join(root, 'advanced-edited.txt'); await fs.writeFile(edited, 'updated advanced ZIPX');
+  await rpc('writeback', { archive, entry: path.basename(advancedSources[0]), source: edited, originalHash: digest(await fs.readFile(advancedSources[0])) });
+  const sibling = (await rpc('list', { archive })).entries.find(e => e.path === path.basename(advancedSources[1])); assert.ok(sibling.method.includes('LZMA'));
+  const out = path.join(root, 'advanced-edited-out'); await rpc('extract', { archive, destination: out });
+  assert.equal(await fs.readFile(path.join(out, path.basename(advancedSources[0])), 'utf8'), 'updated advanced ZIPX');
+  assert.deepEqual(await fs.readFile(path.join(out, path.basename(advancedSources[1]))), await fs.readFile(advancedSources[1]));
+});
+test('7Z does not offer the ZIP-only editing writeback protocol', async () => {
+  const archive = path.join(root, 'not-editable.7z'); await rpc('create', { sources, destination: archive, format: '7z' }); const before = await fs.readFile(archive);
+  const originalHash = digest(await fs.readFile(sources[0]));
+  await assert.rejects(() => rpc('writeback', { archive, entry: path.basename(sources[0]), source: sources[0], originalHash }), e => e.code === 'EDIT_UNSUPPORTED');
+  assert.deepEqual(await fs.readFile(archive), before);
+});
 test('ZIP comments are transactional, Unicode and preserve contents', async () => {
   const archive = path.join(root, 'comment.zip'); await rpc('create', { sources, destination: archive });
   await rpc('comment', { archive, comment: '中文注释\r\n第二行' }); assert.equal((await rpc('read-comment', { archive })).comment, '中文注释\r\n第二行'); await rpc('test', { archive });

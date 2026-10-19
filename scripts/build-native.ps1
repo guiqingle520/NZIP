@@ -5,7 +5,7 @@ $version = (Get-Content -LiteralPath (Join-Path $projectRoot 'package.json') -Ra
 $product = 'NZIP'
 $trustSource = $null
 if ($Edition -eq 'Paid') {
-    $version = '0.7.2'
+    $version = '0.7.3'
     $product = if ($Preview) { 'NZIPPaidPreview' } else { 'NZIPPaid' }
     if (-not $PublicConfig) { throw 'Paid build requires -PublicConfig <client-public.json>; private keys are never bundled.' }
     $trust = Get-Content -LiteralPath $PublicConfig -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -35,7 +35,7 @@ $sourceFiles = Get-ChildItem -LiteralPath (Join-Path $projectRoot 'native') -Fil
 if ($Edition -eq 'Paid') { $compilerArgs += '/define:NZIP_PAID'; if ($Preview) { $compilerArgs += '/define:NZIP_PREVIEW' }; $sourceFiles += $trustSource }
 if ($Edition -eq 'Paid') {
     $paidManifest = Join-Path $generated 'NZIP.manifest'
-    $manifestText = (Get-Content -LiteralPath (Join-Path $projectRoot 'native\NZIP.manifest') -Raw -Encoding UTF8).Replace('name="NZIP"',('name="'+$product+'"')).Replace('version="0.6.3.0"','version="0.7.2.0"')
+    $manifestText = (Get-Content -LiteralPath (Join-Path $projectRoot 'native\NZIP.manifest') -Raw -Encoding UTF8).Replace('name="NZIP"',('name="'+$product+'"')).Replace('version="0.6.4.0"','version="0.7.3.0"')
     Set-Content -LiteralPath $paidManifest -Encoding UTF8 -Value $manifestText
     $compilerArgs = @($compilerArgs | Where-Object { -not $_.StartsWith('/win32manifest:') }) + ('/win32manifest:'+$paidManifest)
 }

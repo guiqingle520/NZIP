@@ -55,7 +55,7 @@ namespace NZIP {
                 SelectByName("你好.txt");await Preview();Assert(Application.OpenForms.Cast<Form>().Any(f=>f.Name=="text-preview"),"Text preview window");var textForm=Application.OpenForms.Cast<Form>().First(f=>f.Name=="text-preview");Assert(((TextBox)Find(textForm,"text-content")).Text.Contains("原生界面"),"Text content");textForm.Close();SelectByName("图片.png");await Preview();Assert(Application.OpenForms.Cast<Form>().Any(f=>f.Name=="image-preview"),"Image preview");Application.OpenForms.Cast<Form>().First(f=>f.Name=="image-preview").Close();checks.Add("real text and image previews");
                 SelectByName("你好.txt");await CopyFiles();Assert(Clipboard.ContainsFileDropList()&&File.Exists(Clipboard.GetFileDropList()[0]),"Clipboard file copy");var extra=Path.Combine(output,"粘贴.txt");File.WriteAllText(extra,"clipboard paste");var drop=new System.Collections.Specialized.StringCollection();drop.Add(extra);Clipboard.SetFileDropList(drop);await Execute("paste");await WaitFor(()=>!backend.Busy,"paste job");await Task.Delay(150);await OpenArchive(zip);GoFolder("素材/");Assert(entries.Any(e=>Json.Str(e,"path")=="素材/粘贴.txt"),"Pasted in current folder");checks.Add("clipboard files copied and pasted into actual archive folder");
                 SelectByName("粘贴.txt");using(var timer=FillDialog("重命名文件",form=>{((TextBox)Find(form,"prompt-value")).Text="已更名.txt";((EditorDialog)form).Confirm.PerformClick();})){commands["rename"].PerformClick();}await WaitFor(()=>!backend.Busy,"rename");await Task.Delay(100);await OpenArchive(zip);GoFolder("素材/");Assert(entries.Any(e=>Json.Str(e,"path")=="素材/已更名.txt"),"Rename menu modifies archive");checks.Add("F2 rename menu and native dialog");
-                using(var timer=FillDialog("压缩文件注释",form=>{((TextBox)Find(form,"archive-comment")).Text="原生 ZIP 注释\r\n第二行";((EditorDialog)form).Confirm.PerformClick();})){commands["comment"].PerformClick();}await WaitFor(()=>!backend.Busy,"comment");Assert(ArchiveTools.Comment(zip,0).Contains("第二行"),"Comment write");checks.Add("ZIP comment dialog writes valid real archive");
+                await WaitFor(()=>!UseWaitCursor&&commands["comment"].Enabled,"comment command after archive refresh");bool commentShown=false;using(var timer=FillDialog("压缩文件注释",form=>{commentShown=true;((TextBox)Find(form,"archive-comment")).Text="原生 ZIP 注释\r\n第二行";((EditorDialog)form).Confirm.PerformClick();})){commands["comment"].PerformClick();}Assert(commentShown,"Actual comment dialog opened");await WaitFor(()=>!backend.Busy,"comment");Assert(ArchiveTools.Comment(zip,0).Contains("第二行"),"Comment write");checks.Add("ZIP comment dialog writes valid real archive");
                 using(var settings=new SettingsWindow(this,backend,preferences)){settings.Show(this);await Task.Delay(60);var navigation=settings.Controls.OfType<Panel>().SelectMany(c=>c.Controls.OfType<ListBox>()).Single();Assert(navigation.Items.Count==9,"Settings categories");ScreenshotForm(settings,output,"settings");for(int i=0;i<9;i++){navigation.SelectedIndex=i;await Task.Delay(5);Assert(settings.Controls.OfType<FlowLayoutPanel>().Any(p=>p.Controls.Count>0),"Settings page");}settings.Close();}checks.Add("nine settings pages render with real controls");
                 await OpenArchive(zip);GoFolder("素材/");SelectByName("已更名.txt");await Execute("delete");await WaitFor(()=>!backend.Busy,"delete entry");await Task.Delay(100);await OpenArchive(zip);Assert(!entries.Any(e=>Json.Str(e,"name")=="已更名.txt"),"Delete menu");checks.Add("entry deletion commits real ZIP");
                 preferences.Values["theme"]="dark";ApplyPreferences();GoFolder("素材/");Screenshot(output,"dark");Assert(files.BackColor.R<50,"Dark theme");preferences.Values["theme"]="light";ApplyPreferences();checks.Add("native light / dark themes");
@@ -69,9 +69,10 @@ namespace NZIP {
                 await CheckListTransitions(output,checks);
                 await CheckTaskResults(output,checks);
                 await CheckLocalOpening(output,checks);
+                await CheckEditorLifecycle(output,checks);
                 Assert(threadErrors.Count==0,"Unhandled UI exceptions: "+String.Join("\r\n",threadErrors.Select(e=>e.ToString())));
                 File.WriteAllText(Path.Combine(output,"result.json"),Json.Encode(Json.Obj("ok",true,"checks",checks,"runtime","winforms")));
-            }catch(Exception error){Environment.ExitCode=1;File.WriteAllText(Path.Combine(output,"result.json"),Json.Encode(Json.Obj("ok",false,"error",error.ToString(),"checks",checks)));}
+            }catch(Exception error){Environment.ExitCode=1;var jobs=Json.Array(Json.Get(backend.Dispatch("init",new object[0]),"jobs")).Select(Json.Map).Select(j=>Json.Obj("type",Json.Str(j,"type"),"status",Json.Str(j,"status"),"error",Json.Str(j,"error"),"code",Json.Str(j,"code"))).ToArray();File.WriteAllText(Path.Combine(output,"result.json"),Json.Encode(Json.Obj("ok",false,"error",error.ToString(),"checks",checks,"statusText",message.Text,"jobs",jobs)));}
             finally{Application.ThreadException-=onThreadError;try{if(originalClipboard!=null)Clipboard.SetDataObject(originalClipboard,true);}catch{}foreach(var form in Application.OpenForms.Cast<Form>().Where(f=>f!=this).ToArray())form.Close();Close();}
         }
         async Task CheckListTransitions(string output,List<string> checks){
@@ -138,7 +139,7 @@ namespace NZIP {
             var launches=new List<System.Diagnostics.ProcessStartInfo>();
             try{
                 preferences.Values["customTemp"]=true;preferences.Values["tempPath"]=Path.Combine(output,"本地打开临时目录");
-                localFileLauncher=info=>launches.Add(info);
+                localFileLauncher=info=>{launches.Add(info);return null;};
                 string source=Path.Combine(output,"本地文件");Directory.CreateDirectory(source);
                 string large=Path.Combine(source,"大文本.txt");File.WriteAllText(large,new string('N',12*1024*1024),System.Text.Encoding.UTF8);
                 File.WriteAllText(Path.Combine(source,"脚本.js"),"throw new Error('must open as text');");File.WriteAllText(Path.Combine(source,"程序.exe"),"not executable");
@@ -151,30 +152,78 @@ namespace NZIP {
                 Assert(visible.Any(e=>Json.Str(e,"name")=="大文本.txt"&&Json.Num(e,"size")>10L*1024*1024),"List browses entries over content preview limit");
                 SelectByName("大文本.txt");typeof(Control).GetMethod("OnDoubleClick",System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic).Invoke(files,new object[]{EventArgs.Empty});
                 await WaitFor(()=>launches.Count==1,"double-click local opening");
-                var launch=launches[0];string opened=launch.Arguments.Trim('"');Assert(launch.UseShellExecute&&launch.FileName.EndsWith("notepad.exe",StringComparison.OrdinalIgnoreCase),"Text is routed to local Notepad");
+                var launch=launches[0];string opened=launch.FileName;Assert(launch.UseShellExecute&&launch.Verb=="open"&&Path.GetExtension(opened)==".txt","Text is routed through the Windows file association");
                 Assert(File.ReadAllBytes(opened).SequenceEqual(File.ReadAllBytes(large)),"Large local file extracted intact");Assert(Directory.GetFiles(Directory.GetParent(Path.GetDirectoryName(opened)).FullName,"*",SearchOption.AllDirectories).Length==1,"Only the selected file is extracted");
                 await Execute("close-archive");Assert(File.Exists(opened),"Closing archive preserves editor copy");File.WriteAllText(opened,"edited copy");
                 await OpenArchive(zip);GoFolder("本地文件/");Assert(Json.Num(entries.Single(e=>Json.Str(e,"name")=="大文本.txt"),"size")>10L*1024*1024,"External editing does not write back");
                 checks.Add("directory/parent browsing and double-click of a 12 MiB text file: exact selected bytes, local editor request, retained independent copy");
                 SelectByName("图片.png");var enter=new KeyEventArgs(Keys.Enter);typeof(Control).GetMethod("OnKeyDown",System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic).Invoke(files,new object[]{enter});await WaitFor(()=>launches.Count==2,"Enter local opening");
                 Assert(enter.Handled&&enter.SuppressKeyPress&&launches[1].UseShellExecute&&launches[1].Verb=="open"&&File.Exists(launches[1].FileName),"Image Enter routes to default app");
-                SelectByName("脚本.js");await OpenEntry();Assert(launches.Count==3&&launches[2].FileName.EndsWith("notepad.exe",StringComparison.OrdinalIgnoreCase),"Scripts open as text");
+                SelectByName("脚本.js");await OpenEntry();Assert(launches.Count==3&&launches[2].UseShellExecute&&launches[2].FileName.EndsWith("脚本.js",StringComparison.OrdinalIgnoreCase),"Files use their local association");
                 SelectByName("程序.exe");bool blocked=false;try{await OpenEntry();}catch(ArchiveError){blocked=true;}Assert(blocked&&launches.Count==3,"Runnable files require manual extraction");
                 Assert(commands["preview"].Text.Contains("内置内容")&&commands.ContainsKey("open-entry"),"Separate browser opening and optional content preview labels");
-                checks.Add("Enter uses default local app request, scripts use local text editor, embedded content preview remains explicit");
+                checks.Add("Enter uses default local app request, source files use Windows associations, embedded content preview remains explicit");
                 int retained=Directory.GetDirectories(OpenedFilesRoot(preferences)).Length;SelectByName("大文本.txt");localFileLauncher=info=>{throw new System.ComponentModel.Win32Exception(1155);};bool failed=false;try{await OpenEntry();}catch(ArchiveError error){failed=error.Message.Contains("默认应用");}Assert(failed&&Directory.GetDirectories(OpenedFilesRoot(preferences)).Length==retained,"Failed launch cleans temporary copy");
-                localFileLauncher=info=>launches.Add(info);bool cancelledOnce=false;Action<string,object> cancelQueued=(name,value)=>{if(name=="jobs"&&!cancelledOnce){cancelledOnce=true;backend.CancelAll();}};
+                localFileLauncher=info=>{launches.Add(info);return null;};bool cancelledOnce=false;Action<string,object> cancelQueued=(name,value)=>{if(name=="jobs"&&!cancelledOnce){cancelledOnce=true;backend.CancelAll();}};
                 backend.Changed+=cancelQueued;bool cancelled=false;try{await OpenEntry();}catch(OperationCanceledException){cancelled=true;}finally{backend.Changed-=cancelQueued;}
                 Assert(cancelled&&launches.Count==3&&Directory.GetDirectories(OpenedFilesRoot(preferences)).Length==retained,"Queued cancellation completes without launching and cleans temporary copy");
                 checks.Add("missing association and queued cancellation clean unlaunched copies without hanging or launching");
                 GoFolder("本地文件/"+deepFolder+"/");SelectByName("TableCleanupJob.java");Assert(Json.Str(Selected()[0],"path").Length>260,"Long archive entry selected");await OpenEntry();
-                Assert(launches.Count==4&&launches[3].FileName.EndsWith("notepad.exe",StringComparison.OrdinalIgnoreCase),"Long source entry routes to text editor");string deepOpened=launches[3].Arguments.Trim('"');
+                Assert(launches.Count==4&&launches[3].UseShellExecute&&launches[3].FileName.EndsWith("TableCleanupJob.java",StringComparison.OrdinalIgnoreCase),"Long source entry routes through its association");string deepOpened=launches[3].FileName;
                 Assert(deepOpened.Length<260&&Path.GetFileName(deepOpened)=="TableCleanupJob.java"&&File.ReadAllText(deepOpened).Contains("中文长路径"),"Local editor receives shortened independent copy with original bytes/name");
                 var deepJob=Json.Array(Json.Get(backend.Dispatch("init",new object[0]),"jobs")).Select(Json.Map).First(j=>Json.Str(j,"type")=="extract");
                 Assert(Path.GetDirectoryName(deepOpened)==Json.Str(Json.Map(Json.Get(deepJob,"result")),"path"),"Task result directory contains the local editing copy");
                 checks.Add("long archive path is extracted and opened through a short independent local editing copy");
-                Screenshot(output,"local-file-browser");
+                Screenshot(output,"local-file-browser");foreach(var session in editSessions)if(session.Editor==null)session.Finished=true;
             }finally{localFileLauncher=originalLauncher;preferences.Values["customTemp"]=customTemp;preferences.Values["tempPath"]=tempPath;}
+        }
+        async Task CheckEditorLifecycle(string output,List<string> checks){
+            var previousLauncher=localFileLauncher;var previousConfirm=confirmWriteBack;int prompts=0;
+            var flags=new List<string>();var helpers=new List<System.Diagnostics.Process>();
+            var verifications=Path.Combine(output,"编辑回写验证");Directory.CreateDirectory(verifications);
+            try{
+                confirmWriteBack=s=>{prompts++;return previousConfirm(s);};
+                localFileLauncher=info=>{
+                    Assert(info.UseShellExecute&&info.Verb=="open"&&info.Arguments=="","External files use the Windows association, without a forced editor");
+                    string flag=Path.Combine(verifications,"editor-"+Guid.NewGuid().ToString("N")+".flag");File.WriteAllText(flag,"running");flags.Add(flag);
+                    string command="while ([System.IO.File]::Exists('"+flag.Replace("'","''")+"')) { Start-Sleep -Milliseconds 40 }";
+                    var process=System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),"System32","WindowsPowerShell","v1.0","powershell.exe"),"-NoProfile -NonInteractive -Command "+ArchiveEngine.Quote(command)){UseShellExecute=false,CreateNoWindow=true,WindowStyle=System.Diagnostics.ProcessWindowStyle.Hidden});helpers.Add(process);return process;
+                };
+                string input=Path.Combine(verifications,"document.txt");File.WriteAllText(input,"original editor document");string zip=Path.Combine(verifications,"editor.zip");
+                await Task.Run(()=>backend.Engine.Create(Json.Obj("sources",new[]{input},"destination",zip),CancellationToken.None));
+                await OpenArchive(zip);SelectByName("document.txt");await OpenEntry();var unchanged=editSessions.Last();await CheckEditedFiles();Assert(prompts==0&&!unchanged.Finished,"No prompt before actual editor exit");
+                File.Delete(flags.Last());await WaitFor(()=>unchanged.Finished&&!checkingEdits,"unchanged editor exit");Assert(prompts==0&&File.Exists(unchanged.LocalPath),"Unchanged editor does not prompt; temporary copy lives until exit");
+                SelectByName("document.txt");await OpenEntry();var saved=editSessions.Last();File.WriteAllText(saved.LocalPath,"saved editor contents");await CheckEditedFiles();Assert(!saved.Finished&&prompts==0,"Saving while the editor is running does not trigger writeback");
+                using(var timer=FillDialog("更新压缩包",form=>{Assert(((TextBox)Find(form,"edit-entry")).Text=="document.txt"&&((TextBox)Find(form,"edit-archive")).Text==zip,"Real confirmation binds original archive and entry");ScreenshotForm(form,output,"edit-writeback-confirm");((EditorDialog)form).Confirm.PerformClick();})){
+                    File.Delete(flags.Last());await WaitFor(()=>saved.Finished&&!checkingEdits&&!backend.Busy,"confirmed edited-file writeback");
+                }
+                string savedOut=Path.Combine(verifications,"saved-out");await Task.Run(()=>backend.Engine.Extract(Json.Obj("archive",zip,"destination",savedOut),CancellationToken.None));
+                Assert(File.ReadAllText(Path.Combine(savedOut,"document.txt"))=="saved editor contents"&&prompts==1&&!saved.Preserve,"Yes writes actual edited content into the ZIP");
+                checks.Add("real editor lifetime: save while running does not prompt; unchanged exit does not prompt; real native Yes dialog writes verified ZIP content");
+                await OpenArchive(zip);SelectByName("document.txt");await OpenEntry();var declined=editSessions.Last();File.WriteAllText(declined.LocalPath,"declined edit");var before=File.ReadAllBytes(zip);
+                using(var timer=FillDialog("更新压缩包",form=>((EditorDialog)form).Cancel.PerformClick())){File.Delete(flags.Last());await WaitFor(()=>declined.Finished&&!checkingEdits,"declined editor writeback");}
+                Assert(prompts==2&&File.ReadAllBytes(zip).SequenceEqual(before)&&File.Exists(declined.LocalPath),"No leaves original ZIP unchanged");
+                checks.Add("real native No dialog keeps archive bytes unchanged and retains temporary file until exit");
+                confirmWriteBack=s=>{prompts++;return true;};await OpenArchive(zip);SelectByName("document.txt");await OpenEntry();var failed=editSessions.Last();File.WriteAllText(failed.LocalPath,"recoverable edit");before=File.ReadAllBytes(zip);
+                using(var locked=new FileStream(ArchivePath.Native(zip),FileMode.Open,FileAccess.Read,FileShare.Read)){
+                    File.Delete(flags.Last());await WaitFor(()=>failed.Finished&&!checkingEdits&&!backend.Busy,"locked archive writeback failure");
+                    Assert(failed.Preserve&&File.Exists(failed.LocalPath)&&message.Text.Contains(failed.LocalPath),"Failed writeback reports preserved editable copy path");
+                }
+                Assert(File.ReadAllBytes(zip).SequenceEqual(before),"Failed atomic replacement preserves original archive");
+                string seven=Path.Combine(verifications,"other.7z");await Task.Run(()=>backend.Engine.Create(Json.Obj("sources",new[]{input},"destination",seven,"format","7z"),CancellationToken.None));
+                await OpenArchive(seven);SelectByName("document.txt");await OpenEntry();var unsupported=editSessions.Last();int priorPrompts=prompts;File.WriteAllText(unsupported.LocalPath,"non-ZIP edit");File.Delete(flags.Last());
+                await WaitFor(()=>unsupported.Editor.HasExited,"7Z associated editor exit");await CheckEditedFiles();Assert(!unsupported.Eligible&&prompts==priorPrompts,"7Z editor does not offer ZIP-only writeback");unsupported.Finished=true;
+                await OpenArchive(zip);SelectByName("document.txt");await OpenEntry();var switched=editSessions.Last();File.WriteAllText(switched.LocalPath,"edited after switching archives");await OpenArchive(seven);File.Delete(flags.Last());
+                await WaitFor(()=>switched.Finished&&!checkingEdits&&!backend.Busy,"writeback after archive switch");Assert(Json.Str(archive,"path")==seven&&!switched.Preserve,"Bound original is updated without switching the current archive view");
+                string switchedOut=Path.Combine(verifications,"switched-out");await Task.Run(()=>backend.Engine.Extract(Json.Obj("archive",zip,"destination",switchedOut),CancellationToken.None));Assert(File.ReadAllText(Path.Combine(switchedOut,"document.txt"))=="edited after switching archives","Switching archive does not redirect the editing target");
+                checks.Add("failed writeback preserves original ZIP and recovery copy; 7Z never prompts; switching archives retains the correct original writeback target");
+                var normalCopies=editSessions.Where(s=>!s.Preserve).Select(s=>s.LocalPath).ToArray();CleanupOpenedFiles();Assert(normalCopies.All(p=>!File.Exists(p)),"Exit cleanup removes all normal editing copies");Assert(File.ReadAllText(failed.LocalPath)=="recoverable edit","Exit cleanup preserves failed writeback recovery file");
+                checks.Add("exit cleanup removes successful/unchanged/declined copies and preserves a failed-writeback recovery file");
+            }finally{
+                localFileLauncher=previousLauncher;confirmWriteBack=previousConfirm;foreach(string flag in flags)if(File.Exists(flag))File.Delete(flag);
+                foreach(var process in helpers){try{if(!process.HasExited&&!process.WaitForExit(3000))process.Kill();}catch(InvalidOperationException){}finally{process.Dispose();}}
+                foreach(var session in editSessions)session.Finished=true;
+            }
         }
         void SelectByName(string name){files.SelectedIndices.Clear();int index=visible.FindIndex(e=>Json.Str(e,"name")==name);Assert(index>=0,"Missing item "+name);files.SelectedIndices.Add(index);}
         static System.Windows.Forms.Timer FillDialog(string title,Action<Form> action){var timer=new System.Windows.Forms.Timer{Interval=80};timer.Tick+=(s,e)=>{var form=Application.OpenForms.Cast<Form>().FirstOrDefault(f=>f.Text==title);if(form==null)return;timer.Stop();try{action(form);}catch{form.DialogResult=DialogResult.Cancel;throw;}};timer.Start();return timer;}

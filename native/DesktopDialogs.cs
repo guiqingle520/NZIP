@@ -56,17 +56,18 @@ namespace NZIP {
         [DllImport("shell32.dll",CharSet=CharSet.Unicode)]static extern int SHFileOperation(ref ShellFileOperation operation);
         void DeleteArchive(bool permanent){string path=Json.Str(archive,"path");bool recycle=!permanent&&preferences.Bool("recycle");if((permanent||preferences.Bool("confirmDelete"))&&MessageBox.Show(this,(recycle?"将压缩文件移入回收站？":"永久删除压缩文件？无法撤销。")+"\n"+path,"NZIP",MessageBoxButtons.YesNo,MessageBoxIcon.Warning)!=DialogResult.Yes)return;ReleaseArchive();if(recycle){var operation=new ShellFileOperation{hwnd=Handle,operation=3,from=path+"\0\0",flags=0x0040|0x0010|0x0400|0x0004};int result=SHFileOperation(ref operation);if(result!=0||operation.aborted)throw new ArchiveError("未能移入回收站（"+result+"），原文件保留");}else File.Delete(path);ShowHome();}
         internal async Task CopyFiles(){var selected=Selected();if(selected.Length==0)return;var temporary=new TempFolder(preferences.TemporaryRoot,"nzip-clipboard-");try{string destination=Path.Combine(temporary.Path,"files");var p=Payload();p["destination"]=destination;p["selected"]=SelectedPaths();await Task.Run(()=>backend.Engine.Extract(p,CancellationToken.None));var collection=new StringCollection();foreach(var item in selected){var path=Path.GetFullPath(Path.Combine(destination,Json.Str(item,"path").Replace('/',Path.DirectorySeparatorChar)));if(!Json.Within(destination,path))throw new ArchiveError("剪贴板路径无效");if(!selected.Any(other=>other!=item&&Json.Bool(other,"isDirectory")&&Json.Str(item,"path").StartsWith(Json.Str(other,"path").TrimEnd('/')+"/",StringComparison.Ordinal)))collection.Add(path);}Clipboard.SetFileDropList(collection);clipboardFolders.Add(temporary);message.Text="已复制文件，可粘贴到资源管理器；退出时清理临时副本";}catch{temporary.Dispose();throw;}}
-        Action<System.Diagnostics.ProcessStartInfo> localFileLauncher=info=>System.Diagnostics.Process.Start(info);
+        Func<System.Diagnostics.ProcessStartInfo,System.Diagnostics.Process> localFileLauncher=info=>System.Diagnostics.Process.Start(info);
         internal static string OpenedFilesRoot(DesktopPreferences prefs){return Path.Combine(prefs.TemporaryRoot,"NZIP-opened");}
         internal async Task OpenEntry(){
             var entry=FirstSelectedEntry();if(entry==null||archive==null)return;
             if(Json.Bool(entry,"isDirectory")){GoFolder(Json.Bool(entry,"parent")?Json.Str(entry,"path"):Json.Str(entry,"path").TrimEnd('/')+"/");return;}
-            string relative=Json.Str(entry,"path"),ext=Path.GetExtension(relative).ToLowerInvariant();
+            string relative=Json.Str(entry,"path"),ext=Path.GetExtension(relative).ToLowerInvariant(),originalArchive=Json.Str(archive,"path"),openPassword=password;int openPage=codePage;
             if(new[]{".exe",".com",".msi",".msp",".scr",".pif",".lnk",".url",".appref-ms",".application",".hta",".cpl",".msc",".scf",".library-ms",".search-ms",".searchconnector-ms",".settingcontent-ms"}.Contains(ext))throw new ArchiveError("程序、安装包和快捷方式请先解压，再自行打开");
-            bool text=new[]{".txt",".md",".json",".csv",".log",".xml",".yaml",".yml",".ini",".css",".js",".ts",".html",".htm",".cfg",".config",".properties",".java",".cs",".sql",".ps1",".psm1",".psd1",".bat",".cmd",".vbs",".vbe",".jse",".wsf",".wsh",".py",".sh",".reg",".svg",".c",".h",".cpp",".hpp",".rs",".go",".rb",".php",".lua",".toml",".env"}.Contains(ext)||Path.GetFileName(relative).Equals("LICENSE",StringComparison.OrdinalIgnoreCase)||Path.GetFileName(relative).Equals("README",StringComparison.OrdinalIgnoreCase);
+            bool eligible=new[]{".zip",".zipx"}.Contains(Path.GetExtension(originalArchive).ToLowerInvariant())&&Json.Str(archive,"type").Equals("zip",StringComparison.OrdinalIgnoreCase);
+            if(Json.Bool(entry,"encrypted")&&openPassword==""){openPassword=Prompt("输入密码",Path.GetFileName(originalArchive),"",true);if(openPassword==null)return;}
             var temporary=new TempFolder(OpenedFilesRoot(preferences),"open-");bool launched=false;
             try{
-                var payload=Payload();string destination=Path.Combine(temporary.Path,"files");payload["destination"]=destination;payload["selected"]=new[]{relative};
+                var payload=Payload();payload["password"]=openPassword;string destination=Path.Combine(temporary.Path,"files");payload["destination"]=destination;payload["selected"]=new[]{relative};
                 var pending=backend.ExtractForOpen(payload);if(preferences.Bool("modalProgress"))ShowTasks();await pending;
                 if(closing||exitPending)throw new OperationCanceledException();
                 string path=Path.GetFullPath(Path.Combine(destination,relative.Replace('/',Path.DirectorySeparatorChar)));
@@ -74,9 +75,12 @@ namespace NZIP {
                 // External editors may still enforce MAX_PATH. Keep a deep entry's
                 // independent editing copy at the extraction root instead.
                 if(path.Length>259){string local=Path.Combine(destination,Path.GetFileName(path));if(!String.Equals(path,local,StringComparison.OrdinalIgnoreCase))File.Move(path,local);path=local;}
-                var launch=text?new System.Diagnostics.ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),"System32","notepad.exe"),ArchiveEngine.Quote(path)){UseShellExecute=true}:new System.Diagnostics.ProcessStartInfo(path){UseShellExecute=true,Verb="open"};
-                try{localFileLauncher(launch);}catch(System.ComponentModel.Win32Exception error){if(error.NativeErrorCode==1155)throw new ArchiveError("此类型没有关联的本地程序，请在 Windows 中设置默认应用，或先解压后打开");throw;}
-                launched=true;message.Text="已用本地程序打开临时副本；修改不会自动写回压缩包";
+                string originalHash=eligible?await Task.Run(()=>ArchiveEdits.Fingerprint(path,CancellationToken.None)):"";
+                if(closing||exitPending)throw new OperationCanceledException();
+                var launch=new System.Diagnostics.ProcessStartInfo(path){UseShellExecute=true,Verb="open"};System.Diagnostics.Process editor;
+                try{editor=localFileLauncher(launch);}catch(System.ComponentModel.Win32Exception error){if(error.NativeErrorCode==1155)throw new ArchiveError("此类型没有关联的本地程序，请在 Windows 中设置默认应用，或先解压后打开");throw;}
+                editSessions.Add(new EditSession{Temporary=temporary,Editor=editor,Archive=originalArchive,Entry=relative,LocalPath=path,OriginalHash=originalHash,Password=openPassword,CodePage=openPage,Eligible=eligible});
+                launched=true;message.Text=eligible?(editor==null?"已用关联程序打开；该程序未提供退出状态，无法自动检测编辑回写":"已用关联程序打开；保存并关闭编辑器后可选择写回压缩包"):"已用关联程序打开；此格式不支持编辑回写";
             }finally{if(!launched)temporary.Dispose();}
         }
         internal async Task Preview(){var entry=FirstSelectedEntry();if(entry==null||archive==null)return;if(Json.Bool(entry,"isDirectory")){GoFolder(Json.Bool(entry,"parent")?Json.Str(entry,"path"):Json.Str(entry,"path").TrimEnd('/')+"/");return;}if(Json.Num(entry,"size")>preferences.Int("previewLimit")*1024L*1024)throw new ArchiveError("文件超过内置内容预览上限，请用本地程序打开");string ext=Path.GetExtension(Json.Str(entry,"path")).ToLowerInvariant();bool image=new[]{".png",".jpg",".jpeg",".gif",".bmp",".ico",".tif",".tiff"}.Contains(ext);if(!image&&!new[]{".txt",".md",".json",".csv",".log",".xml",".yaml",".yml",".ini",".css",".js",".ts",".html",".cfg",".properties",".java",".cs",".sql"}.Contains(ext))throw new ArchiveError("此类型不支持内置内容预览，请用本地程序打开");
@@ -109,7 +113,7 @@ namespace NZIP {
         }
         public void UpdateJobs(J[] current){
             string selected=SelectedJob==null?"":Json.Str(SelectedJob,"id");
-            var types=new Dictionary<string,string>{{"create","压缩"},{"extract","解压"},{"test","测试"},{"modify","修改"},{"scan","扫描"},{"repair","修复"},{"recover","恢复密码"},{"comment","注释"}};
+            var types=new Dictionary<string,string>{{"create","压缩"},{"extract","解压"},{"test","测试"},{"modify","修改"},{"scan","扫描"},{"repair","修复"},{"recover","恢复密码"},{"comment","注释"},{"writeback","编辑回写"}};
             var states=new Dictionary<string,string>{{"queued","排队"},{"running","处理中"},{"cancelling","取消中"},{"completed","完成"},{"failed","失败"},{"cancelled","已取消"}};
             bool rebuild=list.Items.Count!=current.Length||current.Where((job,i)=>Json.Str(job,"id")!=Json.Str(list.Items[i].Tag as J,"id")).Any();
             updating=true;list.BeginUpdate();try{
