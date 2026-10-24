@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 const product = process.argv[2] || 'NZIPPaidPreview';
 if (!['NZIP', 'NZIPPaidPreview', 'NZIPPaid'].includes(product)) throw Error('Unknown edition');
 const paid = product !== 'NZIP';
-const version = paid ? '0.7.3' : JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
+const version = paid ? '0.7.4' : JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
 const stem = product + '-' + version, original = path.resolve('dist', stem + '-win-x64');
 const resultDirectory = path.resolve('test-results/paid-package', randomUUID()); fs.mkdirSync(resultDirectory, { recursive: true });
 function extract(filename, to) {

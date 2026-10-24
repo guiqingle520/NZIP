@@ -1,6 +1,8 @@
 # NZIP 收费版开发分支
 
-当前 `paid-version` 分支开发原生收费版 0.7.3，首版支持签名设备授权、首次联网激活、永久离线使用、3 个当前登记设备名额、自助解绑换机和购买邮箱设备管理。具体交付与验证见 [收费版说明](docs/commercial/implementation-v0.7.0.md)，部署见 [授权服务](server/README.md)。正式域名、邮件服务和正式密钥尚需发行方配置，当前安装包为测试构建。
+当前 `paid-version` 分支开发原生收费版 0.7.4，首版支持签名设备授权、首次联网激活、永久离线使用、3 个当前登记设备名额、自助解绑换机和购买邮箱设备管理。具体交付与验证见 [收费版说明](docs/commercial/implementation-v0.7.0.md)，部署见 [授权服务](server/README.md)。正式域名、邮件服务和正式密钥尚需发行方配置，当前安装包为测试构建。
+
+0.6.5 / 0.7.4 优化目录流式解析、关闭后的目录索引释放、ZIP 元数据合并和进度刷新。新增十万条目反复浏览 / 关闭及 256 MiB 实际压缩解压回归。免费安装包为 `dist/NZIP-0.6.5-Setup-x64.msi`，收费测试安装包为 `dist/NZIPPaidPreview-0.7.4-Setup-x64.msi`；方法、实测内存和边界见 [验证记录](docs/commercial/validation-v0.7.4.md)。
 
 0.6.4 / 0.7.3 按 Bandizip 官方说明补齐包内文件编辑流程：通过 Windows 关联程序打开；保存并关闭编辑器后，ZIP / ZIPX 内容变化会询问是否回写；退出时清理正常副本，回写失败保留原包和可找回的编辑副本。免费安装包为 `dist/NZIP-0.6.4-Setup-x64.msi`，收费测试安装包为 `dist/NZIPPaidPreview-0.7.3-Setup-x64.msi`；见 [验证记录](docs/commercial/validation-v0.7.3.md)。
 

@@ -4,10 +4,10 @@ using System.Reflection;
 [assembly:AssemblyProduct(NZIP.Edition.Id)]
 [assembly:AssemblyDescription("NZIP lightweight local archiver")]
 #if NZIP_PAID
-[assembly:AssemblyVersion("0.7.3.0")]
-[assembly:AssemblyFileVersion("0.7.3.0")]
+[assembly:AssemblyVersion("0.7.4.0")]
+[assembly:AssemblyFileVersion("0.7.4.0")]
 #else
-[assembly:AssemblyVersion("0.6.4.0")]
-[assembly:AssemblyFileVersion("0.6.4.0")]
+[assembly:AssemblyVersion("0.6.5.0")]
+[assembly:AssemblyFileVersion("0.6.5.0")]
 #endif
 [assembly:AssemblyCopyright("Copyright © 2026 NZIP contributors")]

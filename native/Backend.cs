@@ -29,6 +29,7 @@ namespace NZIP {
         void Persist(){lock(writes){string content;lock(gate)content=Json.Encode(Json.Obj("settings",settings,"recent",recent));Directory.CreateDirectory(Profile);var target=Path.Combine(Profile,"preferences.json");var temp=Path.Combine(Profile,".preferences-"+Guid.NewGuid().ToString("N"));File.WriteAllText(temp,content,new UTF8Encoding(false));try{if(File.Exists(target))File.Replace(temp,target,null);else File.Move(temp,target);}finally{if(File.Exists(temp))File.Delete(temp);}}}
         void Remember(J data){lock(gate){if(!Json.Bool(settings,"rememberHistory"))return;recent.RemoveAll(r=>Json.Str(Json.Map(r),"path")==Json.Str(data,"path"));recent.Insert(0,Json.Obj("path",Json.Get(data,"path"),"name",Json.Get(data,"name"),"size",Json.Get(data,"archiveSize"),"type",Json.Get(data,"type"),"openedAt",Json.Now));if(recent.Count>30)recent.RemoveRange(30,recent.Count-30);}Persist();State();}
         public void RememberOpened(J data){Remember(data);}
+        public J[] SnapshotJobs(){lock(gate)return jobs.Select(job=>{var copy=new J(job);var result=Json.Get(job,"result") as J;if(result!=null)copy["result"]=new J(result);return copy;}).ToArray();}
         public bool Busy{get{lock(gate)return active!=null||queue.Count>0;}}
         public void CancelAll(){lock(gate){foreach(var w in queue){w.Cancel.Cancel();w.Job["status"]="cancelled";w.Job["finishedAt"]=Json.Now;w.Cancel.Dispose();if(w.Completion!=null)w.Completion.TrySetCanceled();}queue.Clear();if(active!=null)active.Cancel.Cancel();}Jobs();}
         public Task<J> ExtractForOpen(J payload){var completion=new TaskCompletionSource<J>(TaskCreationOptions.RunContinuationsAsynchronously);payload["openAfterExtract"]=false;Enqueue("extract",payload,completion);return completion.Task;}
@@ -41,15 +42,18 @@ namespace NZIP {
         }
         void Drain(){
             while(true){Work w;lock(gate){if(queue.Count==0){worker=false;return;}w=queue.Dequeue();active=w;w.Job["status"]="running";w.Job["startedAt"]=Json.Now;}Jobs();
-                Action<int> progress=n=>{lock(gate)w.Job["percent"]=n;Jobs();};J result=null;Exception failure=null;
+                long nextProgress=0;int lastProgress=-1;Action<int> progress=n=>{bool publish=false;lock(gate){w.Job["percent"]=n;long now=Stopwatch.GetTimestamp();if(n!=lastProgress&&now>=nextProgress){lastProgress=n;nextProgress=now+Stopwatch.Frequency/10;publish=true;}}if(publish)Jobs();};J result=null;Exception failure=null;
                 try{using(LicenseGate.Admitted(w.Capability)){
                     var token=w.Cancel.Token;
                     if(w.Kind=="create")result=Engine.Create(w.Payload,token,progress);else if(w.Kind=="extract")result=Engine.Extract(w.Payload,token,progress);else if(w.Kind=="modify")result=Engine.Modify(w.Payload,token,progress);else if(w.Kind=="scan")result=ArchiveScanner.Scan(Engine,w.Payload,token,progress);else if(w.Kind=="writeback")result=ArchiveEdits.WriteBack(Engine,w.Payload,token,progress);else if(w.Kind=="comment")result=ArchiveTools.WriteComment(Engine,w.Payload,token);else if(w.Kind=="repair")result=ArchiveTools.Repair(Engine,w.Payload,token,progress);else if(w.Kind=="recover")result=ArchiveTools.RecoverPassword(Engine,w.Payload,token,progress);else result=Engine.Test(Json.Str(w.Payload,"archive"),Json.Str(w.Payload,"password"),token,progress,(int)Json.Num(w.Payload,"codePage"));
                     if(w.Kind=="create"){try{Remember(Engine.List(Json.Str(result,"path"),Json.Str(w.Payload,"password"),CancellationToken.None));}catch(Exception){}}
                     if(w.Kind=="extract"){bool open;lock(gate)open=Json.Bool(w.Payload,"openAfterExtract",Json.Bool(settings,"openAfterExtract"));if(open){try{Reveal(Json.Str(result,"path"),true);}catch(Exception){}}}
-                    lock(gate){w.Job["status"]="completed";w.Job["percent"]=100;w.Job["result"]=result;}
-                }}catch(Exception e){failure=e;lock(gate){w.Job["status"]=e is OperationCanceledException?"cancelled":"failed";w.Job["error"]=e is OperationCanceledException?"操作已取消":e.Message;w.Job["code"]=Json.Get(ArchiveError.Failure(e),"code");}}
-                finally{lock(gate){w.Job["finishedAt"]=Json.Now;active=null;}w.Cancel.Dispose();Jobs();if(w.Completion!=null){if(failure is OperationCanceledException)w.Completion.TrySetCanceled();else if(failure!=null)w.Completion.TrySetException(failure);else w.Completion.TrySetResult(result);}}
+                }}catch(Exception e){failure=e;}
+                finally{lock(gate){
+                    if(failure==null){w.Job["status"]="completed";w.Job["percent"]=100;w.Job["result"]=result;}
+                    else{w.Job["status"]=failure is OperationCanceledException?"cancelled":"failed";w.Job["error"]=failure is OperationCanceledException?"操作已取消":failure.Message;w.Job["code"]=Json.Get(ArchiveError.Failure(failure),"code");}
+                    w.Job["finishedAt"]=Json.Now;active=null;
+                }w.Cancel.Dispose();Jobs();if(w.Completion!=null){if(failure is OperationCanceledException)w.Completion.TrySetCanceled();else if(failure!=null)w.Completion.TrySetException(failure);else w.Completion.TrySetResult(result);}}
             }
         }
         public J Dispatch(string action,object[] args){var result=DispatchCore(action,args);if(new[]{"init","settings","integration"}.Contains(action)){lock(gate)return Json.Decode(Json.Encode(result));}return result;}

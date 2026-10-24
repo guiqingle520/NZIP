@@ -1,4 +1,4 @@
-NZIP 0.6.4 — Windows x64 无广告压缩工具
+NZIP 0.6.5 — Windows x64 无广告压缩工具
 
 本版采用原生 C# / Windows Forms，无需 WebView2 或浏览器内核。
 0.5.1 修复工具栏黑底、图标重叠和文字残影。

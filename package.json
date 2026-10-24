@@ -1,6 +1,6 @@
 {
   "name": "nzip",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "description": "NZIP — 无广告的本地压缩与解压工具",
   "author": "NZIP",
   "license": "SEE LICENSE IN LICENSES.md",
@@ -9,6 +9,7 @@
     "build": "powershell -NoProfile -File scripts/build-native.ps1",
     "test": "node --test tests/native-engine.test.js tests/archive-tools.test.js",
     "test:ui": "node scripts/smoke-native.js",
+    "test:listing": "powershell -NoProfile -File scripts/test-listing.ps1",
     "test:legacy-engine": "node --test tests/engine.test.js",
     "benchmark:startup": "node scripts/benchmark-native.js",
     "test:package": "node scripts/verify-native-package.js",

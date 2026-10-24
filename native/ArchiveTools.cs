@@ -40,7 +40,14 @@ namespace NZIP {
         }
         static void Copy(Stream input,Stream output,long count,CancellationToken token){var buffer=new byte[65536];while(count>0){token.ThrowIfCancellationRequested();int n=input.Read(buffer,0,(int)Math.Min(buffer.Length,count));if(n==0)throw new EndOfStreamException();output.Write(buffer,0,n);count-=n;}}
         public static J ZipMetadata(string path,int page){
-            var result=new J();using(var stream=File.OpenRead(path)){
+            var result=new J();WalkZipMetadata(path,page,(name,comment,method,encryption)=>result[name]=Json.Obj("comment",comment,"method",method,"encryption",encryption));return result;
+        }
+        internal static void MergeZipMetadata(string path,int page,IEnumerable<J> entries){
+            var index=entries.ToDictionary(e=>Json.Str(e,"path").TrimEnd('/'),e=>e,StringComparer.Ordinal);
+            WalkZipMetadata(path,page,(name,comment,method,encryption)=>{J entry;if(index.TryGetValue(name,out entry)){entry["comment"]=comment;entry["method"]=method;entry["encryption"]=encryption;}});
+        }
+        static void WalkZipMetadata(string path,int page,Action<string,string,string,string> visit){
+            using(var stream=File.OpenRead(path)){
                 long end=EndRecord(stream);var r=new BinaryReader(stream);stream.Position=end+4;ushort disk=r.ReadUInt16(),centralDisk=r.ReadUInt16();r.ReadUInt16();ushort count=r.ReadUInt16();uint size=r.ReadUInt32(),offset=r.ReadUInt32();
                 if(disk!=0||centralDisk!=0||count==65535||offset==uint.MaxValue||size==uint.MaxValue)throw new ArchiveError("ZIP64 或分卷的附加注释字段暂不可用");
                 if((long)offset+size>end)throw new ArchiveError("ZIP 中央目录损坏");stream.Position=offset;
@@ -48,9 +55,9 @@ namespace NZIP {
                     if(stream.Position+46>end||r.ReadUInt32()!=0x02014b50)throw new ArchiveError("ZIP 中央目录损坏");
                     r.ReadUInt16();r.ReadUInt16();ushort flags=r.ReadUInt16(),method=r.ReadUInt16();stream.Position+=16;int names=r.ReadUInt16(),extras=r.ReadUInt16(),comments=r.ReadUInt16();stream.Position+=12;
                     if(stream.Position+names+extras+comments>end)throw new ArchiveError("ZIP 字段超出目录边界");var raw=r.ReadBytes(names);var extra=r.ReadBytes(extras);var comment=r.ReadBytes(comments);
-                    try{var encoding=NameEncoding(flags,page);var name=EntryName(raw,extra,flags,page).Replace('\\','/').TrimEnd('/');result[name]=Json.Obj("comment",UnicodeExtra(comment,extra,0x6375)??encoding.GetString(comment),"method",method==0?"Store":method==8?"Deflate":method==99?"AES":method.ToString(),"encryption",(flags&1)!=0?(method==99?"AES":"ZipCrypto"):"");}catch(DecoderFallbackException){}
+                    try{var encoding=NameEncoding(flags,page);var name=EntryName(raw,extra,flags,page).Replace('\\','/').TrimEnd('/');visit(name,UnicodeExtra(comment,extra,0x6375)??encoding.GetString(comment),method==0?"Store":method==8?"Deflate":method==99?"AES":method.ToString(),(flags&1)!=0?(method==99?"AES":"ZipCrypto"):"");}catch(DecoderFallbackException){}
                 }
-            }return result;
+            }
         }
         public static J DetectCodePage(string path){
             var names=new List<byte[]>();using(var stream=File.OpenRead(path))using(var r=new BinaryReader(stream)){

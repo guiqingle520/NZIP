@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-const work = path.resolve(process.argv[2]), executable = path.resolve('dist/NZIPPaidPreview-0.7.3-win-x64/NZIPPaidPreview.exe');
+const work = path.resolve(process.argv[2]), executable = path.resolve('dist/NZIPPaidPreview-0.7.4-win-x64/NZIPPaidPreview.exe');
 const cache = path.join(process.env.LOCALAPPDATA, 'NZIP Paid Preview', 'License', 'license.dat');
 if (fs.existsSync(cache)) throw Error('Existing preview license found; refusing to overwrite a user license');
 const resultDirectory = path.join(work, 'paid-integration-' + randomUUID()); fs.mkdirSync(resultDirectory);

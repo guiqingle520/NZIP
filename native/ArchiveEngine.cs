@@ -13,7 +13,7 @@ using System.Threading.Tasks;
 
 namespace NZIP {
     using J=Dictionary<string,object>;
-    public sealed class ArchiveEngine {
+    public sealed partial class ArchiveEngine {
         public static bool AllowLongPaths=true;
         readonly string binary;
         static readonly Regex Device=new Regex(@"^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)",RegexOptions.IgnoreCase|RegexOptions.Compiled);
@@ -26,52 +26,19 @@ namespace NZIP {
             foreach(char c in arg){if(c=='\\'){slashes++;continue;}if(c=='"'){b.Append('\\',slashes*2+1);b.Append('"');}else{b.Append('\\',slashes);b.Append(c);}slashes=0;}
             b.Append('\\',slashes*2);return b.Append('"').ToString();
         }
-        public string Run(IEnumerable<string> args,string cwd,CancellationToken cancel,Action<int> progress=null) {
-            cancel.ThrowIfCancellationRequested();
-            var all=new[]{"-sccUTF-8","-bsp1"}.Concat(args);
-            var info=new ProcessStartInfo(binary,String.Join(" ",all.Select(Quote))){UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=Encoding.UTF8,StandardErrorEncoding=Encoding.UTF8};
-            if(cwd!=null)info.WorkingDirectory=cwd;
-            using(var p=new Process{StartInfo=info}) {
-                try{p.Start();}catch(Exception e){throw new ArchiveError("无法启动压缩引擎："+e.Message,"ENGINE_MISSING");}
-                p.StandardInput.Close();int oversized=0;
-                var stdout=Task.Run(()=>{
-                    var b=new StringBuilder();var buffer=new char[8192];int n;
-                    while((n=p.StandardOutput.Read(buffer,0,buffer.Length))>0){var s=new string(buffer,0,n);b.Append(s);if(progress!=null)foreach(Match m in Percent.Matches(s))progress(Math.Min(99,Int32.Parse(m.Groups[1].Value)));if(b.Length>64*1024*1024){Interlocked.Exchange(ref oversized,1);break;}}
-                    return b.ToString();
-                });
-                var stderr=Task.Run(()=>{var b=new StringBuilder();var buffer=new char[4096];int n;while((n=p.StandardError.Read(buffer,0,buffer.Length))>0){b.Append(buffer,0,n);if(b.Length>8192)b.Remove(0,b.Length-8192);}return b.ToString();});
-                while(!p.WaitForExit(15)){if(cancel.IsCancellationRequested||Interlocked.CompareExchange(ref oversized,0,0)!=0){try{p.Kill();}catch(InvalidOperationException){}}}
-                var output=stdout.Result;var errors=stderr.Result;cancel.ThrowIfCancellationRequested();
-                if(oversized!=0)throw new ArchiveError("压缩包文件列表过大，无法安全加载");
-                if(p.ExitCode!=0){var detail=(errors+output).ToLowerInvariant();if(new[]{"wrong password","password is incorrect","enter password","encrypted archive"}.Any(detail.Contains))throw new ArchiveError("此压缩包需要正确的密码","PASSWORD_REQUIRED");throw new ArchiveError(p.ExitCode==1?"压缩引擎报告警告，操作未提交，请检查权限或文件占用":detail.Contains("not enough space")?"磁盘空间不足":"操作失败，请检查密码、文件权限及压缩包是否完整");}
-                return output;
-            }
-        }
+        public string Run(IEnumerable<string> args,string cwd,CancellationToken cancel,Action<int> progress=null){return RunProcess(args,cwd,cancel,progress,null);}
         public static string SafeEntry(string name) {
             var n=name.Replace('\\','/');
             if(n.Length==0||n.StartsWith("/")||n.Contains(":")||n.Any(c=>c<' '||"<>\"|?*".Contains(c))||n.Split('/').Any(s=>s=="."||s==".."||s.EndsWith(".")||s.EndsWith(" ")||Device.IsMatch(s)))throw new ArchiveError("压缩包包含不安全的路径："+name,"UNSAFE_PATH");return n;
         }
-        public static J ParseList(string output,string archivePath=null) {
-            int separator=output.IndexOf("----------",StringComparison.Ordinal);if(separator<0)throw new ArchiveError("无法读取压缩包文件列表");
-            var type=Regex.Match(output.Substring(0,separator),@"^Type = (.+)$",RegexOptions.Multiline).Groups[1].Value.Trim();
-            var entries=new List<object>();var seen=new HashSet<string>(StringComparer.OrdinalIgnoreCase);long total=0;bool encrypted=false;
-            foreach(var block in output.Substring(separator+10).Replace("\r\n","\n").Trim().Split(new[]{"\n\n"},StringSplitOptions.RemoveEmptyEntries)) {
-                var f=new J();foreach(var line in block.Split('\n')){int i=line.IndexOf(" = ",StringComparison.Ordinal);if(i>=0)f[line.Substring(0,i)]=line.Substring(i+3);}
-                var rawName=Json.Str(f,"Path");if(rawName==""&&archivePath!=null&&new[]{"gzip","bzip2","xz","zstd","lzma","lzma86","z"}.Contains(type.ToLowerInvariant()))rawName=Path.GetFileNameWithoutExtension(archivePath);var name=SafeEntry(rawName);var attrs=Json.Str(f,"Attributes");
-                if(Json.Str(f,"Symbolic Link")!=""||Json.Str(f,"Hard Link")!=""||Regex.IsMatch(attrs,@"reparse|(?:^|[ _])l[rwxstST-]{9}",RegexOptions.IgnoreCase))throw new ArchiveError("为保护本地文件，暂不支持含链接的压缩包","UNSAFE_PATH");
-                if(!seen.Add(name.TrimEnd('/')))throw new ArchiveError("压缩包包含重复或大小写冲突的路径","UNSAFE_PATH");
-                long size=Json.Num(f,"Size");total=checked(total+size);bool enc=Json.Str(f,"Encrypted")=="+";encrypted|=enc;
-                if(!AllowLongPaths&&name.Length>240)throw new ArchiveError("长路径处理已关闭，请在设置中启用");
-                entries.Add(Json.Obj("path",name,"name",name.TrimEnd('/').Split('/').Last(),"isDirectory",Json.Str(f,"Folder")=="+"||attrs.StartsWith("D"),"size",size,"sizeKnown",Json.Str(f,"Size")!="","packed",Json.Num(f,"Packed Size"),"packedKnown",Json.Str(f,"Packed Size")!="","modified",Json.Str(f,"Modified"),"encrypted",enc,"crc",Json.Str(f,"CRC"),"method",Json.Str(f,"Method"),"attributes",attrs,"comment",Json.Str(f,"Comment"),"extra",Json.Str(f,"Host OS"),"encryption",enc?(Json.Str(f,"Method").Contains("AES")?"AES":"已加密"):""));
-            }
-            return Json.Obj("type",type,"entries",entries,"totalSize",total,"totalSizeKnown",entries.Select(Json.Map).Where(e=>!Json.Bool(e,"isDirectory")).All(e=>Json.Bool(e,"sizeKnown")),"encrypted",encrypted);
-        }
+        public static J ParseList(string output,string archivePath=null){using(var reader=new StringReader(output))return ReadListing(reader,archivePath,CancellationToken.None);}
+        public static J ParseList(TextReader reader,string archivePath,CancellationToken cancel){return ReadListing(reader,archivePath,cancel);}
         public static string[] CodePageOptions(int codePage) {
             if(!new[]{0,65001,936,950,932,949,437,1252,1250,1251,1254,1253,1256,1255,1257,874}.Contains(codePage))throw new ArchiveError("不支持的文件名代码页");
             return codePage==0?new string[0]:new[]{"-mcp="+codePage};
         }
         J ListRaw(string archive,string password,CancellationToken cancel,Action<int> progress=null,int codePage=0) {
-            archive=Json.Absolute(archive);var data=ParseList(Run(new[]{"l","-slt","-p"+(password??"")}.Concat(CodePageOptions(codePage)).Concat(new[]{"--",archive}),null,cancel,progress),archive);
+            archive=Json.Absolute(archive);J data=null;RunProcess(new[]{"l","-slt","-p"+(password??"")}.Concat(CodePageOptions(codePage)).Concat(new[]{"--",archive}),null,cancel,progress,reader=>data=ReadListing(reader,archive,cancel));
             data["path"]=archive;data["name"]=Path.GetFileName(archive);data["archiveSize"]=new FileInfo(ArchivePath.Native(archive)).Length;return data;
         }
         sealed class ReadArchive:IDisposable {public string Path,OuterType;public J Data;public TempFolder Temp;public void Dispose(){if(Temp!=null)Temp.Dispose();}}
