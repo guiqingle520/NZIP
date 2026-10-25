@@ -24,11 +24,11 @@ namespace NZIP {
             editTimer.Tick+=async(s,e)=>await CheckEditedFiles();editTimer.Start();
         }
         bool ConfirmArchiveEdit(EditSession session){
-            using(var dialog=new EditorDialog("更新压缩包",300)){
-                dialog.Note("文件已修改。是否将修改后的文件保存到原压缩包？");
-                dialog.TextField("压缩包",session.Archive,"edit-archive").ReadOnly=true;
-                dialog.TextField("包内文件",session.Entry,"edit-entry").ReadOnly=true;
-                dialog.Confirm.Text="是";dialog.Confirm.DialogResult=DialogResult.Yes;dialog.Cancel.Text="否";dialog.Cancel.DialogResult=DialogResult.No;dialog.AcceptButton=dialog.Cancel;
+            using(var dialog=new EditorDialog(I18n.T("更新压缩包"),300)){
+                dialog.Note(I18n.T("文件已修改。是否将修改后的文件保存到原压缩包？"));
+                dialog.TextField(I18n.T("压缩包"),session.Archive,"edit-archive").ReadOnly=true;
+                dialog.TextField(I18n.T("包内文件"),session.Entry,"edit-entry").ReadOnly=true;
+                dialog.Confirm.Text=I18n.T("是");dialog.Confirm.DialogResult=DialogResult.Yes;dialog.Cancel.Text=I18n.T("否");dialog.Cancel.DialogResult=DialogResult.No;dialog.AcceptButton=dialog.Cancel;
                 return dialog.ShowDialog(this)==DialogResult.Yes;
             }
         }
@@ -46,12 +46,12 @@ namespace NZIP {
                         bool current=archive!=null&&String.Equals(Json.Str(archive,"path"),session.Archive,StringComparison.OrdinalIgnoreCase);if(current)ReleaseArchive();
                         try{
                             await backend.WriteBackForOpen(Json.Obj("archive",session.Archive,"entry",session.Entry,"source",session.LocalPath,"originalHash",session.OriginalHash,"password",session.Password,"codePage",session.CodePage));
-                            message.Text="编辑后的文件已写回压缩包";
+                            message.Text=I18n.T("编辑后的文件已写回压缩包");
                             if(archive!=null&&String.Equals(Json.Str(archive,"path"),session.Archive,StringComparison.OrdinalIgnoreCase)&&!closing&&!exitPending){string location=folder;await OpenArchive(session.Archive,password,codePage);GoFolder(nodes.ContainsKey(location)?location:"");}
                         }finally{if(!closing&&!backend.Busy)AcquireArchive();}
                     }catch(Exception error){
-                        session.Preserve=true;string detail=error.Message+"\r\n\r\n编辑后的文件已保留，可从这里找回：\r\n"+session.LocalPath;message.Text=detail;
-                        if(Environment.GetEnvironmentVariable("NZIP_TEST_MODE")!="1")MessageBox.Show(this,detail,"未能写回压缩包",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+                        session.Preserve=true;string detail=error.Message+I18n.T("\r\n\r\n编辑后的文件已保留，可从这里找回：\r\n")+session.LocalPath;message.Text=detail;
+                        if(Environment.GetEnvironmentVariable("NZIP_TEST_MODE")!="1")MessageBox.Show(this,detail,I18n.T("未能写回压缩包"),MessageBoxButtons.OK,MessageBoxIcon.Warning);
                     }
                 }
             }finally{checkingEdits=false;}

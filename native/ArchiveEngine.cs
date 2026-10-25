@@ -106,14 +106,14 @@ namespace NZIP {
         }
         J ExtractCore(J p,CancellationToken cancel,Action<int> progress) {
             var archive=Json.Absolute(Json.Str(p,"archive"));var destination=Json.Absolute(Json.Str(p,"destination"));var password=Json.Str(p,"password");var selected=Json.Strings(p,"selected");int codePage=(int)Json.Num(p,"codePage");using(var opened=OpenRead(archive,password,cancel,codePage)){var data=opened.Data??ListRaw(opened.Path,password,cancel,null,codePage);
-            ValidateSelected(selected,data);if(Directory.Exists(destination)||File.Exists(destination))throw new ArchiveError("目标文件夹已存在，请选择新的文件夹名称","DEST_EXISTS");
+            string existing=Json.Str(p,"existing","reject");if(!new[]{"reject","overwrite","skip","rename","newer"}.Contains(existing))throw new ArchiveError("未知的同名文件处理方式");CheckOutputPath(destination);ValidateSelected(selected,data);if(File.Exists(destination)||(Directory.Exists(destination)&&existing=="reject"))throw new ArchiveError("目标文件夹已存在，请选择新的文件夹名称","DEST_EXISTS");
             var outputEntries=Json.Array(Json.Get(data,"entries")).Select(Json.Map).Where(e=>selected.Length==0||selected.Any(s=>Json.Str(e,"path")==s||Json.Str(e,"path").StartsWith(s.TrimEnd('/')+"/",StringComparison.Ordinal))).ToArray();
             if(!AllowLongPaths&&outputEntries.Any(e=>Path.Combine(destination,Json.Str(e,"path")).Length>259))throw new ArchiveError("目标包含长路径，请在设置中启用长路径处理");
             if(Json.Bool(p,"checkSpace",true)){var drive=new DriveInfo(Path.GetPathRoot(destination));if(drive.IsReady&&outputEntries.Sum(e=>Json.Num(e,"size"))>drive.AvailableFreeSpace)throw new ArchiveError("磁盘空间不足，未开始解压");}
-            using(var staging=new TempFolder(Path.GetDirectoryName(destination),".nzip-extract-")) {
+            using(var staging=new TempFolder(Path.GetDirectoryName(destination)??destination,".nzip-extract-")) {
                 if(Json.Bool(p,"preallocate"))foreach(var entry in outputEntries.Where(e=>!Json.Bool(e,"isDirectory"))){cancel.ThrowIfCancellationRequested();var path=Path.GetFullPath(Path.Combine(staging.Path,Json.Str(entry,"path")));if(!Json.Within(staging.Path,path))throw new ArchiveError("输出路径无效","UNSAFE_PATH");Directory.CreateDirectory(Path.GetDirectoryName(path));using(var output=new FileStream(ArchivePath.Native(path),FileMode.CreateNew,FileAccess.Write,FileShare.None))output.SetLength(Json.Num(entry,"size"));}
                 var args=new List<string>{"x","-y","-spd","-p"+password,"-o"+staging.Path};args.AddRange(CodePageOptions(codePage));args.AddRange(new[]{"--",opened.Path});args.AddRange(selected);Run(args,null,cancel,progress);VerifyTree(staging.Path,cancel);cancel.ThrowIfCancellationRequested();
-                if(Directory.Exists(destination)||File.Exists(destination))throw new ArchiveError("目标文件夹已存在，请更换路径","DEST_EXISTS");Directory.Move(staging.Path,destination);return Json.Obj("path",destination,"message","解压完成");
+                return CommitExtraction(staging.Path,destination,existing,cancel);
             }
         }}
         public J Modify(J p,CancellationToken cancel,Action<int> progress=null) {

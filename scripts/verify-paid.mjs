@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-const work = path.resolve(process.argv[2]), executable = path.resolve('dist/NZIPPaidPreview-0.7.4-win-x64/NZIPPaidPreview.exe');
+const work = path.resolve(process.argv[2]), executable = path.resolve('dist/NZIPPaidPreview-0.8.0-win-x64/NZIPPaidPreview.exe');
 const cache = path.join(process.env.LOCALAPPDATA, 'NZIP Paid Preview', 'License', 'license.dat');
 if (fs.existsSync(cache)) throw Error('Existing preview license found; refusing to overwrite a user license');
 const resultDirectory = path.join(work, 'paid-integration-' + randomUUID()); fs.mkdirSync(resultDirectory);
@@ -17,10 +17,10 @@ const rpc = (operation, payload) => invoke(['--engine-rpc'], { operation, payloa
 let createdCache = false, checks = [];
 try {
   assert.equal(invoke(['--license-status']).license.active, false);
-  for (const operation of ['create', 'extract', 'modify', 'test', 'scan', 'comment', 'repair', 'recover', 'writeback']) {
+  for (const operation of ['create', 'extract', 'modify', 'test', 'scan', 'comment', 'repair', 'recover', 'writeback', 'sfx']) {
     const result = rpc(operation, {}); assert.equal(result.ok, false, operation); assert.equal(result.code, 'LICENSE_REQUIRED', operation);
   }
-  checks.push('All eight paid RPC entry points reject unactivated client, including test-mode environment');
+  checks.push('All ten paid RPC entry points reject unactivated client, including test-mode environment');
   const source = path.join(resultDirectory, '素材'); fs.mkdirSync(source); fs.writeFileSync(path.join(source, '你好.txt'), 'NZIP licensed offline round-trip');
   const zip = path.join(resultDirectory, 'test.zip');
   const engine = spawnSync(path.resolve('vendor/7zip/7z.exe'), ['a', zip, source], { windowsHide: true, encoding: 'utf8' }); assert.equal(engine.status, 0);

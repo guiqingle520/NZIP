@@ -1,19 +1,19 @@
-param([ValidateSet('Free','Paid')][string]$Edition='Free',[string]$PublicConfig,[switch]$Preview)
+param([ValidateSet('Free','Paid')][string]$Edition='Free',[string]$PublicConfig,[switch]$Preview,[string]$ModernPublisher='CN=NZIP',[string]$ModernCertificateThumbprint)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $package = Get-Content -LiteralPath (Join-Path $projectRoot 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 $version = $package.version
 $product = 'NZIP'
-if ($Edition -eq 'Paid') { $version='0.7.4'; $product=if ($Preview) { 'NZIPPaidPreview' } else { 'NZIPPaid' } }
+if ($Edition -eq 'Paid') { $version='0.8.0'; $product=if ($Preview) { 'NZIPPaidPreview' } else { 'NZIPPaid' } }
 $appExe = Join-Path $projectRoot ('dist\' + $product + '-' + $version + '-win-x64\' + $product + '.exe')
 $needsCompile = -not (Test-Path -LiteralPath $appExe)
 if (-not $needsCompile) {
     $exeTime = (Get-Item -LiteralPath $appExe).LastWriteTimeUtc
     $needsCompile = @(Get-ChildItem -LiteralPath (Join-Path $projectRoot 'native') -Filter '*.cs' | Where-Object { $_.LastWriteTimeUtc -gt $exeTime }).Count -gt 0
 }
-if ($Edition -eq 'Paid') { & (Join-Path $PSScriptRoot 'build-native.ps1') -Edition Paid -PublicConfig $PublicConfig -Preview:$Preview }
-elseif ($needsCompile) { & (Join-Path $PSScriptRoot 'build-native.ps1') }
-else { & (Join-Path $PSScriptRoot 'build-native.ps1') -SkipCompile }
+if ($Edition -eq 'Paid') { & (Join-Path $PSScriptRoot 'build-native.ps1') -Edition Paid -PublicConfig $PublicConfig -Preview:$Preview -ModernPublisher $ModernPublisher -ModernCertificateThumbprint $ModernCertificateThumbprint }
+elseif ($needsCompile -or $ModernPublisher -ne 'CN=NZIP' -or $ModernCertificateThumbprint) { & (Join-Path $PSScriptRoot 'build-native.ps1') -ModernPublisher $ModernPublisher -ModernCertificateThumbprint $ModernCertificateThumbprint }
+else { & (Join-Path $PSScriptRoot 'build-native.ps1') -SkipCompile -ModernPublisher $ModernPublisher }
 $work = if ($Edition -eq 'Free') { Join-Path $projectRoot '.cache\installer' } else { Join-Path $projectRoot ('.cache\installer-' + $product) }
 New-Item -ItemType Directory -Path $work -Force | Out-Null
 $wixRoot = if ($env:NZIP_WIX_DIR) { $env:NZIP_WIX_DIR } else { Join-Path $projectRoot '.cache\wix314' }

@@ -1,0 +1,15 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { createHash, createPrivateKey, createPublicKey, sign } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+const [product, version, installer, tag, keyPath = '.cache/update-signing/private.pem'] = process.argv.slice(2);
+if (!['NZIP', 'NZIPPaid', 'NZIPPaidPreview'].includes(product) || !/^\d+\.\d+\.\d+$/.test(version || '') || !/^[A-Za-z0-9._-]+$/.test(tag || '') || !installer) throw Error('Usage: node scripts/sign-update.mjs <product> <version> <installer.msi> <release-tag> [private-key.pem]');
+const metadata = spawnSync('powershell.exe', ['-NoProfile', '-File', path.resolve('scripts/read-msi-properties.ps1'), '-Path', path.resolve(installer)], { encoding: 'utf8', windowsHide: true });
+if (metadata.error || metadata.status !== 0) throw metadata.error || Error(metadata.stderr || 'Cannot read MSI metadata');
+const info = JSON.parse(metadata.stdout);
+if (info.ProductName !== product || info.ProductVersion !== version) throw Error('MSI product/version does not match the update manifest');
+const trust = JSON.parse(await fs.readFile('config/updates-public.json', 'utf8')), bytes = await fs.readFile(installer), key = createPrivateKey(await fs.readFile(keyPath));
+if (createPublicKey(key).export({ format: 'jwk' }).n !== trust.modulus) throw Error('Signing key does not match the embedded update public key');
+const payload = Buffer.from(JSON.stringify({ product, version, url: `https://github.com/${trust.repository}/releases/download/${tag}/${path.basename(installer)}`, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), notes: `NZIP ${version}`, publishedAt: new Date().toISOString() }));
+const output = path.resolve('dist', product + '-update.json');
+await fs.writeFile(output, JSON.stringify({ keyId: trust.keyId, payload: payload.toString('base64url'), signature: sign('sha256', payload, key).toString('base64url') }, null, 2));console.log(output);

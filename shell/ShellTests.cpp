@@ -1,0 +1,18 @@
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <shobjidl.h>
+#include <string>
+#include <iostream>
+#include <stdexcept>
+#include "ShellConfig.h"
+static int checks=0;
+static void Check(bool ok,const char* name){if(!ok)throw std::runtime_error(name);checks++;}
+static IShellItemArray* Items(const std::wstring& path){IShellItem* item=nullptr;Check(SUCCEEDED(SHCreateItemFromParsingName(path.c_str(),nullptr,IID_PPV_ARGS(&item))),"Create filesystem item");IShellItemArray* result=nullptr;HRESULT hr=SHCreateShellItemArrayFromShellItem(item,IID_PPV_ARGS(&result));item->Release();Check(SUCCEEDED(hr),"Create real selection");return result;}
+int wmain(int argc,wchar_t** argv){if(argc!=3)return 2;CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{
+    HMODULE dll=LoadLibraryExW(argv[1],nullptr,LOAD_WITH_ALTERED_SEARCH_PATH);Check(dll!=nullptr,"Load native shell DLL");auto get=reinterpret_cast<HRESULT (STDAPICALLTYPE*)(REFCLSID,REFIID,void**)>(GetProcAddress(dll,"DllGetClassObject"));auto unload=reinterpret_cast<HRESULT (STDAPICALLTYPE*)()>(GetProcAddress(dll,"DllCanUnloadNow"));Check(get&&unload,"COM DLL exports");Check(unload()==S_OK,"Initially unloadable");
+    IClassFactory* factory=nullptr;Check(SUCCEEDED(get(NZIP_CLSID,IID_PPV_ARGS(&factory))),"Matching edition factory");IExplorerCommand* root=nullptr;Check(SUCCEEDED(factory->CreateInstance(nullptr,IID_PPV_ARGS(&root))),"Create IExplorerCommand");factory->Release();Check(unload()==S_FALSE,"Root keeps DLL alive");EXPCMDFLAGS flags;Check(SUCCEEDED(root->GetFlags(&flags))&&flags==static_cast<EXPCMDFLAGS>(ECF_HASSUBCOMMANDS),"Root submenu flag");PWSTR title=nullptr;Check(SUCCEEDED(root->GetTitle(nullptr,&title))&&std::wstring(title)==L"NZIP","Root title");CoTaskMemFree(title);EXPCMDSTATE state;Check(SUCCEEDED(root->GetState(nullptr,FALSE,&state))&&state==ECS_HIDDEN,"No selection hides root");
+    std::wstring directory=argv[2],archive=directory+L"\\sample.zip",file=directory+L"\\sample.txt";CreateDirectoryW(directory.c_str(),nullptr);for(auto name:{archive,file}){HANDLE handle=CreateFileW(name.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);Check(handle!=INVALID_HANDLE_VALUE,"Create isolated selection file");CloseHandle(handle);}auto zip=Items(archive),text=Items(file),folder=Items(directory);
+    Check(SUCCEEDED(root->GetState(folder,FALSE,&state))&&state==ECS_ENABLED,"Folder shows root");IEnumExplorerCommand* children=nullptr;Check(SUCCEEDED(root->EnumSubCommands(&children)),"Enumerate subcommands");ULONG fetched=0;IExplorerCommand* commands[4]={};Check(children->Next(4,commands,&fetched)==S_OK&&fetched==4,"Exactly four subcommands");IExplorerCommand* end=nullptr;Check(children->Next(1,&end,&fetched)==S_FALSE&&fetched==0,"End of enumeration");
+    for(int i=0;i<4;i++){Check(SUCCEEDED(commands[i]->GetTitle(zip,&title))&&title&&wcslen(title)>0,"Child localized title");CoTaskMemFree(title);Check(SUCCEEDED(commands[i]->GetState(zip,FALSE,&state))&&state==ECS_ENABLED,"Archive actions enabled");Check(SUCCEEDED(commands[i]->GetState(text,FALSE,&state))&&state==(i==3?ECS_ENABLED:ECS_HIDDEN),"Non-archive hides open and extract");commands[i]->Release();}
+    IEnumExplorerCommand* clone=nullptr;Check(SUCCEEDED(children->Reset())&&SUCCEEDED(children->Clone(&clone)),"Enumeration reset and clone");clone->Release();children->Release();zip->Release();text->Release();folder->Release();root->Release();Check(unload()==S_OK,"All COM objects released");FreeLibrary(dll);CoUninitialize();std::cout<<"Native ExplorerCommand checks passed: "<<checks<<std::endl;return 0;
+}catch(const std::exception& error){std::cerr<<error.what()<<" (Windows error "<<GetLastError()<<")"<<std::endl;CoUninitialize();return 1;}}

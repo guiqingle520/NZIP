@@ -1,5 +1,10 @@
 namespace NZIP {
     internal static class Edition {
+#if NZIP_PREVIEW
+        public static readonly bool Preview=true;
+#else
+        public static readonly bool Preview=false;
+#endif
 #if NZIP_PAID
         public static readonly bool Paid=true;
 #if NZIP_PREVIEW

@@ -1,6 +1,6 @@
 {
   "name": "nzip",
-  "version": "0.6.5",
+  "version": "0.7.0",
   "description": "NZIP — 无广告的本地压缩与解压工具",
   "author": "NZIP",
   "license": "SEE LICENSE IN LICENSES.md",
@@ -21,7 +21,9 @@
     "test:licensing": "powershell -NoProfile -File scripts/test-licensing.ps1",
     "test:licensing-portal": "node --test tests/licensing-portal.test.mjs",
     "build:paid": "powershell -NoProfile -File scripts/build-native.ps1 -Edition Paid",
-    "build:paid-installer": "powershell -NoProfile -File scripts/build-installer.ps1 -Edition Paid"
+    "build:paid-installer": "powershell -NoProfile -File scripts/build-installer.ps1 -Edition Paid",
+    "test:features": "node scripts/smoke-features.mjs",
+    "test:modern-shell": "powershell -NoProfile -File scripts/test-modern-shell.ps1"
   },
   "devDependencies": {
     "playwright": "1.64.0"

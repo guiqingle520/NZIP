@@ -1,10 +1,11 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { spawnSync } = require('node:child_process');
 const root = path.resolve(__dirname,'..');
 const product = process.argv[2] || 'NZIP';
 if (!['NZIP','NZIPPaid','NZIPPaidPreview'].includes(product)) throw Error('Unknown edition');
-const paid = product !== 'NZIP', version = paid ? '0.7.4' : require('../package.json').version;
+const paid = product !== 'NZIP', version = paid ? '0.8.0' : require('../package.json').version;
 const upgradeCode = product === 'NZIPPaid' ? 'CF84EF19-0DCF-4AD2-9D15-1B7CDBF9B281' : product === 'NZIPPaidPreview' ? 'BAB9513B-BB98-4C4E-AC82-1A55D7A784B5' : '06765602-7035-4ED7-9DCB-80F02E0E5626';
 const work = path.join(root,paid?`.cache/installer-${product}`:'.cache/installer'), app=path.join(root,`dist/${product}-${version}-win-x64`);
 const xml = s => String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
@@ -12,7 +13,7 @@ const id = (prefix,s) => prefix+crypto.createHash('sha256').update(s).digest('he
 const guid = s => { const h=crypto.createHash('sha256').update(product+'/file/'+s).digest('hex'); return `${h.slice(0,8)}-${h.slice(8,12)}-5${h.slice(13,16)}-a${h.slice(17,20)}-${h.slice(20,32)}`; };
 const registryRoot='Software\\'+product+'\\Installer';
 const refs=[],dirIds=[],fileComponents=[];
-let mainFile;
+let mainFile, modernScriptFile;
 function directory(relative, directoryId){
   dirIds.push(directoryId); let result='';
   for(const e of fs.readdirSync(path.join(app,relative),{withFileTypes:true})){
@@ -21,6 +22,7 @@ function directory(relative, directoryId){
     else {
       const component=id('C',rel), file=id('F',rel);refs.push(component);
       if(rel===product+'.exe')mainFile=file;
+      if(rel==='Register-ModernShell.ps1')modernScriptFile=file;
       fileComponents.push(String.raw`<DirectoryRef Id="${directoryId}"><Component Id="${component}" Guid="${guid(rel)}" Win64="yes"><File Id="${file}" Source="${xml(path.join(app,rel))}" Name="${xml(e.name)}"/><RegistryValue Root="HKCU" Key="${registryRoot}\Files" Name="${component}" Type="integer" Value="1" KeyPath="yes"/></Component></DirectoryRef>`);
     }
   }
@@ -36,6 +38,9 @@ function registryComponent(component,context){
     return `<RegistryValue Root="HKCU" Key="${xml(identity(v.key))}" ${v.name?`Name="${xml(identity(v.name))}"`:''} Type="string" Value="${xml(identity(val))}" ${i===0?'KeyPath="yes"':''}/>`;
   }).join('')}</Component>`;
 }
+const modernListing = spawnSync(path.join(root,'vendor/7zip/7z.exe'), ['l','-slt',path.join(app,'ModernShell.msix')], { encoding:'utf8', windowsHide:true });
+if (modernListing.error || modernListing.status !== 0) throw modernListing.error || Error('Cannot inspect modern shell package');
+const modernSigned = modernListing.stdout.includes('Path = AppxSignature.p7x');
 const source=String.raw`<?xml version="1.0" encoding="utf-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
 <Product Id="${productCode}" Name="${product}" Language="2052" Codepage="936" Version="${version}" Manufacturer="NZIP" UpgradeCode="${upgradeCode}">
@@ -43,6 +48,11 @@ const source=String.raw`<?xml version="1.0" encoding="utf-8"?>
      Elevated privileges allow rollback backups on protected data drives. -->
 <Package InstallerVersion="500" Compressed="yes" InstallPrivileges="elevated" Platform="x64" Description="NZIP 无广告的压缩解压与预览工具"/>
 <Property Id="MsiLogging" Value="voicewarmupx"/>
+<Property Id="MODERNSIGNED" Value="${modernSigned?'1':'0'}"/>
+<Property Id="WINBUILD"><RegistrySearch Id="WinBuildSearch" Root="HKLM" Key="SOFTWARE\Microsoft\Windows NT\CurrentVersion" Name="CurrentBuildNumber" Type="raw" Win64="yes"/></Property>
+<CustomAction Id="RegisterModernShell" Directory="System64Folder" ExeCommand="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File &quot;[#${modernScriptFile}]&quot; -Mode register -Product ${product} -Directory &quot;[INSTALLFOLDER].&quot;" Execute="immediate" Return="ignore"/>
+<CustomAction Id="UnregisterModernShell" Directory="System64Folder" ExeCommand="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File &quot;[#${modernScriptFile}]&quot; -Mode unregister -Product ${product} -Directory &quot;[INSTALLFOLDER].&quot;" Execute="immediate" Return="ignore"/>
+<InstallExecuteSequence><Custom Action="UnregisterModernShell" Before="RemoveFiles">REMOVE = "ALL" OR (&amp;ShellMenus = 2)</Custom><Custom Action="RegisterModernShell" After="InstallFinalize">NOT REMOVE AND MODERNSIGNED = "1" AND WINBUILD &gt;= "22000" AND (&amp;ShellMenus = 3)</Custom></InstallExecuteSequence>
 <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="已安装更新版本的 ${product}。" Schedule="afterInstallInitialize"/>
 <MediaTemplate EmbedCab="yes" CompressionLevel="high"/>
 
@@ -59,7 +69,7 @@ const source=String.raw`<?xml version="1.0" encoding="utf-8"?>
 <Condition Message="需要 Windows 10/11 x64。">Installed OR (VersionNT64 AND WINMAJOR &gt;= "#10")</Condition>
 <Condition Message="请先安装 Microsoft .NET Framework 4.8。">Installed OR NET48 &gt;= "#528040"</Condition>
 <Icon Id="AppIcon" SourceFile="${xml(path.join(root,'assets/icon.ico'))}"/>
-<Directory Id="TARGETDIR" Name="SourceDir"><Directory Id="LocalAppDataFolder"><Directory Id="NzipProgramsDir" Name="Programs"><Directory Id="INSTALLFOLDER" Name="${product}">${directories}</Directory></Directory></Directory><Directory Id="ProgramMenuFolder"><Directory Id="NzipMenuDir" Name="${product}"/></Directory><Directory Id="DesktopFolder"/></Directory>
+<Directory Id="TARGETDIR" Name="SourceDir"><Directory Id="System64Folder"/><Directory Id="LocalAppDataFolder"><Directory Id="NzipProgramsDir" Name="Programs"><Directory Id="INSTALLFOLDER" Name="${product}">${directories}</Directory></Directory></Directory><Directory Id="ProgramMenuFolder"><Directory Id="NzipMenuDir" Name="${product}"/></Directory><Directory Id="DesktopFolder"/></Directory>
 ${fileComponents.join('\n')}
 <DirectoryRef Id="INSTALLFOLDER">
 ${registryComponent('OpenWithRegistration',false)}

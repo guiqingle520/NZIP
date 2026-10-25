@@ -1,0 +1,61 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Net;
+using System.Net.Http;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+using File=NZIP.ArchiveFile;
+using Directory=NZIP.ArchiveDirectory;
+
+namespace NZIP {
+    using J=Dictionary<string,object>;
+    public sealed partial class DesktopWindow {
+        sealed class UpdateResponse:HttpMessageHandler {
+            public byte[] Bytes;public string Redirect;public List<string> Requests=new List<string>();
+            protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken token){Requests.Add(request.RequestUri.ToString());var response=new HttpResponseMessage(Redirect==null?HttpStatusCode.OK:HttpStatusCode.Redirect){Content=new ByteArrayContent(Bytes??new byte[0])};if(Redirect!=null)response.Headers.Location=new Uri(Redirect);return Task.FromResult(response);}
+        }
+        internal async Task RunFeatureSmoke(string output){
+            Directory.CreateDirectory(output);var checks=new List<string>();
+            try{
+                preferences.Values["modalProgress"]=false;preferences.Values["openAfterExtract"]=false;preferences.Values["autoUpdate"]=false;ApplyPreferences();Assert(menus.Items[0].Text==I18n.T("文件(&F)"),"Main menu matches stored language");Screenshot(output,"main-"+I18n.Language);
+                string source=Path.Combine(output,"sources");Directory.CreateDirectory(source);File.WriteAllText(Path.Combine(source,"中文.txt"),"new-a");File.WriteAllText(Path.Combine(source,"資料.txt"),"new-b");
+                string zip=Path.Combine(output,"合并 文件.zip");await Task.Run(()=>backend.Engine.Create(Json.Obj("sources",new[]{Path.Combine(source,"中文.txt"),Path.Combine(source,"資料.txt")},"destination",zip),CancellationToken.None));
+                foreach(string policy in new[]{"overwrite","skip","rename","newer"}){
+                    string target=Path.Combine(output,policy);Directory.CreateDirectory(target);File.WriteAllText(Path.Combine(target,"中文.txt"),"old-a");File.WriteAllText(Path.Combine(target,"keep.txt"),"unrelated");System.IO.File.SetLastWriteTimeUtc(ArchivePath.Native(Path.Combine(target,"中文.txt")),DateTime.UtcNow.AddDays(2));
+                    await Task.Run(()=>backend.Engine.Extract(Json.Obj("archive",zip,"destination",target,"existing",policy,"preallocate",true),CancellationToken.None));Assert(File.ReadAllText(Path.Combine(target,"keep.txt"))=="unrelated"&&File.ReadAllText(Path.Combine(target,"資料.txt"))=="new-b","Merge preserves unrelated and new files");Assert(File.ReadAllText(Path.Combine(target,"中文.txt"))==(policy=="overwrite"?"new-a":"old-a"),"Existing-file policy is respected");if(policy=="rename")Assert(File.ReadAllText(Path.Combine(target,"中文 (2).txt"))=="new-a","Rename preserves both copies");
+                }
+                string newer=Path.Combine(output,"newer");System.IO.File.SetLastWriteTimeUtc(ArchivePath.Native(Path.Combine(newer,"中文.txt")),new DateTime(2000,1,1,0,0,0,DateTimeKind.Utc));await Task.Run(()=>backend.Engine.Extract(Json.Obj("archive",zip,"destination",newer,"existing","newer"),CancellationToken.None));Assert(File.ReadAllText(Path.Combine(newer,"中文.txt"))=="new-a","Older destination is overwritten");
+                string rollback=Path.Combine(output,"rollback");Directory.CreateDirectory(rollback);File.WriteAllText(Path.Combine(rollback,"中文.txt"),"old-a");File.WriteAllText(Path.Combine(rollback,"資料.txt"),"old-b");bool failed=false;using(var locked=new FileStream(ArchivePath.Native(Path.Combine(rollback,"資料.txt")),FileMode.Open,FileAccess.Read,FileShare.Read)){try{await Task.Run(()=>backend.Engine.Extract(Json.Obj("archive",zip,"destination",rollback,"existing","overwrite"),CancellationToken.None));}catch(IOException){failed=true;}}
+                Assert(failed&&File.ReadAllText(Path.Combine(rollback,"中文.txt"))=="old-a"&&File.ReadAllText(Path.Combine(rollback,"資料.txt"))=="old-b","Locked-file failure restores original files");Assert(!Directory.GetDirectories(output).Any(p=>Path.GetFileName(p).StartsWith(".nzip-merge-")),"Successful rollback removes backup directories");checks.Add("Existing-folder merge: overwrite, skip, rename, older-file comparison, unrelated preservation, preallocation and real sharing-lock rollback");
+
+                await OpenArchive(zip);Assert(Text.StartsWith("合并 文件.zip - ",StringComparison.Ordinal)&&Json.Str(visible[0],"name")=="中文.txt","Localized interface preserves actual archive and entry names");files.SelectedIndices.Add(0);ExportDataObject exportData=null;string exported=null;dragFiles=(data,effects)=>{Assert(effects==DragDropEffects.Copy&&data.GetDataPresent(DataFormats.FileDrop),"Drag exports real CF_HDROP copy data");exportData=data as ExportDataObject;Assert(exportData!=null,"Native asynchronous drag data object");var iid=new Guid("3D8B0590-F691-11D2-8EA9-006097DF5BD4");IntPtr unknown=System.Runtime.InteropServices.Marshal.GetIUnknownForObject(data),capability;try{int result=System.Runtime.InteropServices.Marshal.QueryInterface(unknown,ref iid,out capability);Assert(result==0,"Async shell capability exposed through COM");System.Runtime.InteropServices.Marshal.Release(capability);}finally{System.Runtime.InteropServices.Marshal.Release(unknown);}exportData.StartOperation(null);Assert(!CanCleanupExport(exportData.Temporary),"Asynchronous copy prevents source cleanup");var paths=(string[])data.GetData(DataFormats.FileDrop);Assert(paths.Length==1,"Only selected files exported");exported=paths[0];Assert(File.ReadAllText(exported)=="new-a","Dragged file bytes correct");return DragDropEffects.Copy;};await ExportDrag();dragFiles=null;Assert(exported!=null&&File.Exists(exported)&&exportData.Active,"Drag source stays available during asynchronous copy after Drop returns");exportData.EndOperation(0,null,1);Assert(CanCleanupExport(exportData.Temporary),"Completed asynchronous copies allow cleanup");Assert(backend.Engine.List(zip,"",CancellationToken.None)!=null,"Drag preserves archive");checks.Add("Drag preparation: actual selected extraction, CF_HDROP paths, Copy-only effect and COM asynchronous-copy lifetime; source retained for Explorer asynchronous reads (desktop drop not automated)");
+
+                string vaultProfile=Path.Combine(output,"vault");string secret="test-only-secret-5f41-中文";string vaultId;using(var vault=new PasswordVault(vaultProfile)){vaultId=vault.Add("Regression",secret);Assert(vault.Get(vaultId)==secret,"Vault round trip");Assert(!Encoding.UTF8.GetString(File.ReadAllBytes(Path.Combine(vaultProfile,"passwords.dat"))).Contains(secret),"No plaintext password on disk");}
+                using(var vault=new PasswordVault(vaultProfile)){Assert(vault.Get(vaultId)==secret,"DPAPI decrypts on reopening");vault.Remove(vaultId);Assert(vault.Labels().Length==0,"Removal persisted");}
+                using(var vault=new PasswordVault(vaultProfile))Assert(vault.Labels().Length==0,"Vault remains empty after reopening");checks.Add("Password vault: real Windows CurrentUser DPAPI, reopen, plaintext absence, deletion persistence; no saved customer passwords touched");
+
+                var release=Json.Decode(File.ReadAllText(Path.Combine(output,"signed-release.json")));var updateTrust=Json.Map(Json.Get(release,"trust"));string envelope=Json.Str(release,"envelope");var verified=UpdateClient.Verify(envelope,updateTrust,Edition.Id,typeof(Program).Assembly.GetName().Version);Assert(Json.Str(verified,"version")=="9999.0.0","Valid signed release accepted");bool rejected=false;var tampered=Json.Decode(envelope);tampered["signature"]=new string('A',512);try{UpdateClient.Verify(Json.Encode(tampered),updateTrust,Edition.Id,new Version(1,0));}catch(Exception){rejected=true;}Assert(rejected,"Invalid signature rejected");
+                rejected=false;try{UpdateClient.Verify(envelope,updateTrust,"OtherProduct",new Version(1,0));}catch(ArchiveError){rejected=true;}Assert(rejected,"Wrong edition rejected");rejected=false;try{UpdateClient.Verify(envelope,updateTrust,Edition.Id,new Version(9999,0,0));}catch(ArchiveError){rejected=true;}Assert(rejected,"Downgrade and replay rejected");
+                byte[] updateBytes=File.ReadAllBytes(Path.Combine(output,"download.bin"));var previous=UpdateClient.HandlerFactory;var download=Json.Map(verified);download["envelope"]=envelope;
+                try{
+                    UpdateClient.HandlerFactory=()=>new UpdateResponse{Bytes=updateBytes};string downloaded=await UpdateClient.DownloadFixture(download,updateTrust,Path.Combine(output,"download-good"),CancellationToken.None);Assert(File.ReadAllBytes(downloaded).SequenceEqual(updateBytes),"Complete signed-download pipeline validates SHA-256");
+                    var wrong=(byte[])updateBytes.Clone();wrong[0]^=1;UpdateClient.HandlerFactory=()=>new UpdateResponse{Bytes=wrong};rejected=false;try{await UpdateClient.DownloadFixture(download,updateTrust,Path.Combine(output,"download-bad"),CancellationToken.None);}catch(ArchiveError){rejected=true;}Assert(rejected&&Directory.GetFiles(Path.Combine(output,"download-bad")).Length==0,"Tampered download rejected and cleaned");
+                    UpdateClient.HandlerFactory=()=>new UpdateResponse{Redirect="https://example.org/untrusted.msi"};rejected=false;try{await UpdateClient.DownloadFixture(download,updateTrust,Path.Combine(output,"download-redirect"),CancellationToken.None);}catch(ArchiveError){rejected=true;}Assert(rejected,"Untrusted HTTPS redirect rejected");
+                }finally{UpdateClient.HandlerFactory=previous;}
+                checks.Add("GitHub updater: real RSA-3072 signature verification, wrong signature / edition / replay rejection; full downloader against isolated HTTP handler validates bytes and hash, rejects tampering / foreign redirects; no installer executed");
+
+                string seven=Path.Combine(output,"source.7z");await Task.Run(()=>backend.Engine.Create(Json.Obj("sources",new[]{source},"destination",seven,"format","7z"),CancellationToken.None));string sfx=Path.Combine(output,"Standalone.exe");await Task.Run(()=>SfxBuilder.Build(backend.Engine,Json.Obj("archive",seven,"destination",sfx),CancellationToken.None));string unpacked=Path.Combine(output,"standalone-output");using(var process=Process.Start(new ProcessStartInfo(sfx,"--extract "+ArchiveEngine.Quote(unpacked)){UseShellExecute=false,CreateNoWindow=true})){bool ended=await Task.Run(()=>process.WaitForExit(30000));Assert(ended&&process.ExitCode==0,"Standalone SFX completes without installed NZIP");}Assert(File.ReadAllText(Path.Combine(unpacked,"sources","中文.txt"))=="new-a","Standalone SFX output is exact");checks.Add("Standalone SFX: real 7Z creation, self-contained EXE creation, actual independent process extraction and exact output bytes; no archived program is run");
+
+                string before=I18n.Language;try{I18n.Language="en-US";Assert(I18n.T("覆盖文件（失败时回滚）")=="Overwrite files (roll back on failure)","English resource available");using(var sample=new EditorDialog(I18n.T("解压文件"),200)){sample.Note(I18n.T("遇到同名文件"));sample.Show(this);StyleDialog(sample);Assert(sample.Confirm.Text=="OK","English buttons render");ScreenshotForm(sample,output,"english");sample.Close();}I18n.Language="zh-TW";Assert(I18n.T("压缩文件与文件夹")=="壓縮檔案與資料夾","Traditional Chinese Windows conversion");using(var sample=new EditorDialog(I18n.T("解压文件"),200)){sample.Note(I18n.T("覆盖文件（失败时回滚）"));sample.Show(this);StyleDialog(sample);Assert(sample.Confirm.Text=="確定","Traditional Chinese buttons render");ScreenshotForm(sample,output,"traditional");sample.Close();}}finally{I18n.Language=before;}
+                checks.Add("English embedded resources and Traditional Chinese conversion render actual native dialogs; file contents and file names are not translated");
+                File.WriteAllText(Path.Combine(output,"result.json"),Json.Encode(Json.Obj("ok",true,"checks",checks)));
+            }catch(Exception error){Environment.ExitCode=1;File.WriteAllText(Path.Combine(output,"result.json"),Json.Encode(Json.Obj("ok",false,"error",error.ToString(),"checks",checks)));}
+            finally{Close();}
+        }
+    }
+}

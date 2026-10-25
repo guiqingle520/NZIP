@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 const product = process.argv[2] || 'NZIPPaidPreview';
 if (!['NZIP', 'NZIPPaidPreview', 'NZIPPaid'].includes(product)) throw Error('Unknown edition');
 const paid = product !== 'NZIP';
-const version = paid ? '0.7.4' : JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
+const version = paid ? '0.8.0' : JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
 const stem = product + '-' + version, original = path.resolve('dist', stem + '-win-x64');
 const resultDirectory = path.resolve('test-results/paid-package', randomUUID()); fs.mkdirSync(resultDirectory, { recursive: true });
 function extract(filename, to) {
@@ -19,7 +19,7 @@ function files(root, relative = '') {
 extract('dist/' + stem + '-win-x64.zip', path.join(resultDirectory, 'zip'));
 extract('dist/' + stem + '-Setup-x64.msi', path.join(resultDirectory, 'msi'));
 const unpacked = path.join(resultDirectory, 'zip', stem + '-win-x64'), names = files(original);
-assert.deepEqual(files(unpacked), names); assert.equal(names.length, paid ? 11 : 9);
+assert.deepEqual(files(unpacked), names); assert.equal(names.length, paid ? 15 : 13);
 const runtimeConfig = fs.readFileSync(path.join(unpacked, product + '.exe.config'), 'utf8');
 assert(runtimeConfig.includes('sku=".NETFramework,Version=v4.8"'));
 assert(runtimeConfig.includes('Switch.System.IO.UseLegacyPathHandling=false;Switch.System.IO.BlockLongPaths=false'));

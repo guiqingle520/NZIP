@@ -20,6 +20,7 @@ namespace NZIP {
         static bool Owned(string value,string exe){return value!=null&&value.StartsWith("\""+exe+"\"",StringComparison.OrdinalIgnoreCase);}
         public static bool IsContextEnabled(string exe){return Owned(Get(Classes+@"SystemFileAssociations\.zip\shell\NZIP\shell\01.Open\command",""),exe);}
         public static bool IsRegistered(string exe){return Owned(Get(Classes+@"Applications\NZIP.exe\shell\open\command",""),exe);}
+        public static void SetLanguage(string language){if(Environment.GetEnvironmentVariable("NZIP_TEST_MODE")=="1")return;if(!new[]{"zh-CN","zh-TW","en-US"}.Contains(language))return;using(var key=Registry.CurrentUser.CreateSubKey(@"Software\"+Edition.Id))key.SetValue("UILanguage",language,RegistryValueKind.String);}
         public static void Notify(){SHChangeNotify(0x08000000,0,IntPtr.Zero,IntPtr.Zero);}
         public static void Register(string executable,bool context,bool notify=true){
             var exe=Path.GetFullPath(executable);var icon="\""+exe+"\",0";
